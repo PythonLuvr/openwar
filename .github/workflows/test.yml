@@ -1,0 +1,31 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Lint (em dashes)
+        run: npm run lint:em-dashes
+      - name: Lint (sanity)
+        run: npm run lint:sanity
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test

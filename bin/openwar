@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+// Resolves whether to run compiled dist (preferred) or tsx-compile src on the
+// fly (for development inside the repo before `npm run build` has run).
+
+import { existsSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join, resolve } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, "..");
+const dist = join(repoRoot, "dist", "cli.js");
+const srcCli = join(repoRoot, "src", "cli.ts");
+
+async function loadCli() {
+  if (existsSync(dist)) {
+    return await import(pathToFileURL(dist).href);
+  }
+  if (existsSync(srcCli)) {
+    try {
+      const tsx = await import("tsx/esm/api");
+      tsx.register();
+      return await import(pathToFileURL(srcCli).href);
+    } catch {
+      process.stderr.write(
+        "openwar: dist/cli.js not found and tsx is not installed. Run `npm install` and `npm run build`.\n",
+      );
+      process.exit(1);
+    }
+  }
+  process.stderr.write("openwar: cannot locate cli (no dist/cli.js or src/cli.ts).\n");
+  process.exit(1);
+}
+
+const mod = await loadCli();
+if (typeof mod.main !== "function") {
+  process.stderr.write("openwar: cli module did not export main().\n");
+  process.exit(1);
+}
+try {
+  const code = await mod.main(process.argv.slice(2));
+  process.exit(code ?? 0);
+} catch (err) {
+  process.stderr.write(`openwar: ${(err && err.message) || err}\n`);
+  process.exit(1);
+}

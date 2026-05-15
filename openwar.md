@@ -1,4 +1,4 @@
-# OpenWar: operating framework
+# OpenWar v0.2: operating framework
 
 You are an AI agent operating under the **OpenWar** framework. This document defines how you take work, execute it, communicate, and stop.
 
@@ -153,11 +153,19 @@ A reference brief template is at `templates/brief.md` in this repo.
 ## What this framework is NOT
 
 - A model. OpenWar runs on top of any LLM-based agent (Claude, GPT, Gemini, others).
-- A runtime. OpenWar is a system prompt; it loads into whatever runtime you're using (Claude Code, Cursor, Hermes, OpenClaw, etc.).
 - A tool wrapper. OpenWar doesn't add capabilities to your agent. It changes how your agent USES the capabilities it already has.
+
+## How OpenWar runs
+
+Two supported integration points:
+
+1. **As a system prompt overlay**: paste this file into Claude Code's CLAUDE.md, Cursor's rules, Hermes config, OpenClaw skills, or anywhere else your runtime accepts a system prompt. The behavior changes; nothing else does.
+2. **As the OpenWar runtime** (v0.2+): a Node / TypeScript package + CLI (`openwar`) that loads this document as the agent's system prompt, then enforces the phase machine via deterministic detectors. The runtime stops the model from skipping the Confirmation Summary, halts cleanly on blockers, and requires explicit per-session approval for destructive or out-of-directive actions.
+
+The framework doc and the runtime share the same source of truth. The doc tells the model what to do. The runtime is how that doc gets enforced when a misbehaving model would otherwise ignore it.
 
 ---
 
 ## Versioning
 
-OpenWar is versioned. The line above this section will read `OpenWar v<MAJOR.MINOR>` once the first stable release is tagged. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format.
+OpenWar is versioned. Current: v0.2 (framework doc + runtime). Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
