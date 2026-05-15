@@ -1,6 +1,10 @@
-# OpenWar
+<p align="center">
+  <img src="openwar-logo.png" alt="OpenWar" width="160" height="160" />
+</p>
 
-**The framework that ships in [War Room](https://github.com/pythonluvr/war-room), use it anywhere.**
+<h1 align="center">OpenWar</h1>
+
+<p align="center"><strong>The framework that ships in <a href="https://github.com/pythonluvr/war-room">War Room</a>. Use it anywhere.</strong></p>
 
 OpenWar is a system prompt that turns any LLM-based agent (Claude, GPT, Gemini, others) into something that behaves like a senior peer instead of a customer service rep. It confirms briefs before acting, breaks work into phases, asks before doing anything destructive, and writes like an adult who's busy.
 
