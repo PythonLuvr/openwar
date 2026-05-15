@@ -53,16 +53,60 @@ Provide an API key for whichever adapter you pick:
 
 The phase loop is enforced by deterministic pattern detectors. No second LLM, no judging. If the agent skips the Confirmation Summary, the runtime asks it to restate before letting execution start.
 
+## Tools (new in v0.3)
+
+The runtime ships six native tools plus a hand-rolled MCP client. Every tool call goes through:
+
+1. Schema translation in the adapter to the provider's native function-calling format.
+2. Authorization check against the brief's `authorized_costs` and any session-approved categories.
+3. Sandbox execution: workdir-bounded paths, timeout enforcement, output caps, HTTP host allowlist.
+4. Result fed back to the LLM for the next round.
+
+If a tool requires an unauthorized category, the runtime halts into Phase 3 and prompts for `y` / `Y` / `n` (one-shot, session-wide, deny).
+
+### Native tools
+
+| Name          | Categories required | Notes |
+|---------------|---------------------|-------|
+| `read_file`   | `filesystem_read`   | Default-allowed. Caps at `max_bytes` (1 MB default). |
+| `write_file`  | `filesystem_write`  | Atomic via tmp+rename. Creates parent dirs. |
+| `list_dir`    | `filesystem_read`   | Skips `.git`, `node_modules`, etc. Honors `.openwarignore`. |
+| `shell_exec`  | `shell_exec`        | SIGTERM then SIGKILL on timeout. `--no-shell` disables entirely. |
+| `http_fetch`  | `http_fetch`        | HTTPS only by default. Optional `~/.openwar/http-allow.json` host allowlist. |
+| `apply_patch` | `filesystem_write`  | Unified-diff applier. Rolls back on hunk failure. |
+
+List them with `openwar tools`.
+
+### MCP servers
+
+Configure once with `openwar mcp add <name> <command...>` (writes to `~/.openwar/mcp.json`) or per-brief:
+
+```yaml
+mcp_servers:
+  - filesystem=npx -y @modelcontextprotocol/server-filesystem /allowed/dir
+```
+
+Each MCP server's tools auto-register under `<name>:<tool>` and require `mcp_tool:<name>:<tool>` to call. Use `mcp_tool:<name>:*` in `authorized_costs` to pre-approve everything a server exposes.
+
+Test a server before relying on it:
+
+```bash
+openwar mcp test filesystem
+```
+
 ## CLI
 
 ```text
 openwar run <brief.md> [--adapter <id>] [--model <name>] [--mode gated|auto]
-                       [--resume] [--ephemeral]
+                       [--workdir <path>] [--no-shell]
+                       [--mcp-server name=command] [--resume] [--ephemeral]
 openwar resume <brief_id>
 openwar list
 openwar inspect <brief_id> [--transcript]
 openwar validate <brief.md>
 openwar adapters
+openwar tools
+openwar mcp list | add <name> <cmd...> | remove <name> | test <name>
 openwar version
 ```
 
@@ -94,14 +138,18 @@ brief_id: YYYY-MM-DD-NNN           # optional; auto-generated if absent
 deadline: YYYY-MM-DD               # optional
 scope_locked: true|false           # if true, refuse out-of-scope additions
 mode: gated|auto                   # optional override of per-step-vs-auto
+workdir: ./relative-or-absolute   # optional. All filesystem tools sandboxed here.
 authorized_costs:                  # pre-approves these destructive categories
   - filesystem_write
-  - generation_credits
-  - git_push
+  - shell_exec
+  - http_fetch
+  - mcp_tool:filesystem
+mcp_servers:                       # optional. name=command, one per entry.
+  - filesystem=npx -y @modelcontextprotocol/server-filesystem /allowed/dir
 ---
 ```
 
-Recognized `authorized_costs` categories include `filesystem_delete`, `git_history_rewrite`, `git_push`, `deploy`, `external_message`, `paid_api`, `package_change`, `ci_modify`, `process_kill`. Use `*` to authorize everything (rarely a good idea).
+Recognized `authorized_costs` categories: `filesystem_read` (default-allowed), `filesystem_write`, `filesystem_delete`, `shell_exec`, `http_fetch`, `paid_api_call`, `git_write`, `git_push`, `deploy`, `external_message`, plus `mcp_tool:<server>` and `mcp_tool:<server>:<tool>`. Wildcards: `*` matches every category, `mcp_tool:*` matches any MCP tool, `mcp_tool:server:*` matches any tool from a server. `*` triggers a brief-lint warning; almost always you want specific entries.
 
 Body sections: **Objective**, **Deliverables**, **Constraints**, **Tools required**, **Notes / unknowns**.
 

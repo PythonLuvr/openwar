@@ -271,6 +271,27 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
       .map((v) => v.trim());
   }
 
+  let workdir: string | undefined;
+  if (typeof raw.workdir === "string" && raw.workdir.trim()) {
+    workdir = raw.workdir.trim();
+  }
+
+  // mcp_servers: a list of strings in "name=command" form. The minimal YAML
+  // parser does not support nested objects; this keeps frontmatter flat.
+  let mcp_servers: { name: string; command: string }[] | undefined;
+  if (Array.isArray(raw.mcp_servers)) {
+    mcp_servers = [];
+    for (const entry of raw.mcp_servers) {
+      if (typeof entry !== "string") continue;
+      const eq = entry.indexOf("=");
+      if (eq === -1) continue;
+      const name = entry.slice(0, eq).trim();
+      const command = entry.slice(eq + 1).trim();
+      if (name && command) mcp_servers.push({ name, command });
+    }
+    if (mcp_servers.length === 0) mcp_servers = undefined;
+  }
+
   return {
     project,
     ...(brief_id ? { brief_id } : {}),
@@ -278,6 +299,8 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     scope_locked,
     ...(mode ? { mode } : {}),
     authorized_costs,
+    ...(workdir ? { workdir } : {}),
+    ...(mcp_servers ? { mcp_servers } : {}),
   };
 }
 

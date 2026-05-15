@@ -4,9 +4,15 @@ brief_id: YYYY-MM-DD-NNN
 deadline: YYYY-MM-DD
 scope_locked: false
 mode: gated
+# workdir: ./relative-or-absolute-path
+# All filesystem tools resolve paths against this. Defaults to cwd.
 authorized_costs:
-  # - api_calls
-  # - generation_credits
+  # - filesystem_write
+  # - shell_exec
+  # - http_fetch
+  # - mcp_tool:filesystem
+# mcp_servers:
+#   - filesystem=npx -y @modelcontextprotocol/server-filesystem /allowed/dir
 ---
 
 # Objective

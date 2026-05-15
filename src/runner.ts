@@ -9,7 +9,10 @@ import type {
   SessionState,
   ExecutionMode,
   PhaseTransition,
+  ToolDefinition,
+  ToolCall,
 } from "./types.js";
+import type { ToolExecutor } from "./tools/types.js";
 import { parseBrief, validateBrief, generateBriefId } from "./brief.js";
 import { loadFrameworkDoc } from "./framework.js";
 import { runIntake } from "./phases/intake.js";
@@ -24,6 +27,12 @@ import { runCompletion } from "./phases/completion.js";
 import { createTerminalIO } from "./io.js";
 import { writeSession, readSession } from "./state/persist.js";
 import { appendTranscript } from "./state/transcript.js";
+import { NATIVE_TOOLS } from "./tools/native/index.js";
+import { SandboxContext } from "./sandbox/types.js";
+import { loadHostAllowlist } from "./sandbox/host-allowlist.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { MCPClient, StdioTransport, loadGlobalMcpConfig, splitCommand } from "./mcp/index.js";
 
 export async function run(opts: RunOptions): Promise<RunResult> {
   if (!opts.briefPath && !opts.briefSource) {
@@ -137,6 +146,72 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     historyForExecute = session.messages.slice();
   }
 
+  // ------------------- Set up tools + sandbox + MCP -------------------
+  const workdir = opts.workdir ?? brief.frontmatter.workdir ?? process.cwd();
+  const httpAllowPath = join(homedir(), ".openwar", "http-allow.json");
+  let httpAllowlist;
+  try { httpAllowlist = await loadHostAllowlist(httpAllowPath); } catch { httpAllowlist = null; }
+  const sandbox = SandboxContext._create({
+    workdir,
+    defaultTimeoutMs: 30_000,
+    defaultMaxOutputBytes: 1_000_000,
+    httpAllowlist,
+    shellEnabled: !opts.disableShell,
+  });
+
+  const toolDefinitions: ToolDefinition[] = [];
+  const toolExecutors = new Map<string, ToolExecutor>();
+  if (!opts.disableNativeTools) {
+    for (const [name, t] of NATIVE_TOOLS.entries()) {
+      toolDefinitions.push(t.definition);
+      toolExecutors.set(name, t.executor);
+    }
+  }
+
+  // MCP servers from brief + global + opts.
+  const mcpClients: MCPClient[] = [];
+  const briefMcp = (brief.frontmatter as { mcp_servers?: { name: string; command: string; cwd?: string }[] }).mcp_servers ?? [];
+  const globalMcp = await loadGlobalMcpConfig().catch(() => []);
+  const mcpConfigs = [...globalMcp, ...briefMcp, ...(opts.mcpServers ?? [])];
+  for (const cfg of mcpConfigs) {
+    try {
+      const { bin, args } = splitCommand(cfg.command);
+      const transport = new StdioTransport({ command: bin, args, ...(cfg.cwd && { cwd: cfg.cwd }) });
+      const client = new MCPClient({ transport });
+      await client.connect();
+      const tools = await client.listTools();
+      for (const t of tools) {
+        const fqName = `${cfg.name}:${t.name}`;
+        toolDefinitions.push({
+          name: fqName,
+          description: t.description ?? `MCP tool ${fqName}`,
+          input_schema: t.inputSchema,
+          origin: "mcp",
+          mcp_server_name: cfg.name,
+          authorization_categories: [`mcp_tool:${cfg.name}:${t.name}`],
+        });
+        toolExecutors.set(fqName, async (call) => {
+          const result = await client.callTool({ name: t.name, arguments: call.arguments as Record<string, unknown> });
+          const text = result.content.map(c => c.text ?? "").join("\n");
+          return {
+            call_id: call.id,
+            success: !result.isError,
+            content: text,
+            ...(result.isError && { error: { code: "MCP_ERROR", message: text } }),
+          };
+        });
+      }
+      mcpClients.push(client);
+      io.write(`MCP connected: ${cfg.name} (${tools.length} tools)\n`);
+    } catch (err) {
+      io.warn(`MCP server "${cfg.name}" failed to connect: ${(err as Error).message}`);
+    }
+  }
+
+  const cleanupMcp = async () => {
+    for (const c of mcpClients) await c.disconnect().catch(() => {});
+  };
+
   // ------------------- Phase 1 -------------------
   transition("execute", "intake accepted");
   persist();
@@ -147,9 +222,11 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     io,
     mode,
     history: historyForExecute,
+    toolDefinitions,
+    toolExecutors,
+    sandbox,
+    sessionApproved: session.meta.session_approved_categories ?? [],
     onMessage: (m) => {
-      // The execute phase already pushed onto its own local history;
-      // mirror into the session.
       recordMessage(m);
       persist();
     },
@@ -157,12 +234,81 @@ export async function run(opts: RunOptions): Promise<RunResult> {
 
   // ------------------- Phase 3 (loop) -------------------
   while (executeResult.outcome === "destructive_denied") {
+    transition("destructive", "destructive intent detected");
+    persist();
+
+    // Two variants of Phase 3:
+    //   (a) Tool-call gate: the runner detected an unauthorized tool call.
+    //       Prompt y / Y / n. Y promotes the missing categories session-wide.
+    //   (b) Text-based gate: detector matched a destructive verb in the
+    //       assistant text. Original v0.2 behavior, one-shot y/n.
+    if (executeResult.destructive_tool_call) {
+      const call = executeResult.destructive_tool_call;
+      const missing = executeResult.destructive_missing_categories ?? [];
+      io.banner("Phase 3: Tool authorization required");
+      io.write(
+        `Tool:        ${call.name}\n` +
+        `Arguments:   ${JSON.stringify(call.arguments)}\n` +
+        `Categories:  ${missing.join(", ")}\n`,
+      );
+      io.write(`Approve? y = this call only, Y = approve "${missing.join(", ")}" for the rest of the session, n = deny\n`);
+      const reply = (await io.prompt("> ")).trim();
+      const approveOnce = reply === "y" || reply === "yes";
+      const approveSession = reply === "Y";
+      const approved = approveOnce || approveSession;
+
+      session.meta.destructive_approvals.push({
+        at: new Date().toISOString(),
+        action: `tool:${call.name}`,
+        approved,
+        ...(approveSession && { session_categories: missing as string[] }),
+      });
+      if (approveSession) {
+        session.meta.session_approved_categories = [
+          ...(session.meta.session_approved_categories ?? []),
+          ...missing,
+        ];
+      }
+      persist();
+
+      if (!approved) {
+        // Inject a synthetic tool result expressing denial, then continue.
+        const denialMsg: Message = {
+          role: "user",
+          content: `[tool_result ${call.id} (denied by operator)]\nThe operator did not approve "${call.name}". Pick a different path or stop.`,
+          at: new Date().toISOString(),
+          meta: { phase: "execute" },
+        };
+        recordMessage(denialMsg);
+        transition("execute", "tool call denied");
+        persist();
+        executeResult = await runExecute({
+          brief, adapter, system, io, mode,
+          history: [...executeResult.history, denialMsg],
+          toolDefinitions, toolExecutors, sandbox,
+          sessionApproved: session.meta.session_approved_categories ?? [],
+          onMessage: (m) => { recordMessage(m); persist(); },
+        });
+        continue;
+      }
+
+      transition("execute", approveSession ? "tool approved (session)" : "tool approved (once)");
+      persist();
+      executeResult = await runExecute({
+        brief, adapter, system, io, mode,
+        history: executeResult.history,
+        toolDefinitions, toolExecutors, sandbox,
+        sessionApproved: session.meta.session_approved_categories ?? [],
+        onMessage: (m) => { recordMessage(m); persist(); },
+      });
+      continue;
+    }
+
+    // Variant (b): text-based destructive gate (v0.2 path).
     const last = lastAssistant(executeResult.history);
     const detection = executeResult.blocking_detectors?.destructive;
     if (!detection || !detection.destructive) break;
 
-    transition("destructive", "destructive intent detected");
-    persist();
     const approved = await awaitOperatorYes({
       io,
       detection,
@@ -181,16 +327,11 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     persist();
 
     executeResult = await runExecute({
-      brief,
-      adapter,
-      system,
-      io,
-      mode,
+      brief, adapter, system, io, mode,
       history: [...executeResult.history, followUp],
-      onMessage: (m) => {
-        recordMessage(m);
-        persist();
-      },
+      toolDefinitions, toolExecutors, sandbox,
+      sessionApproved: session.meta.session_approved_categories ?? [],
+      onMessage: (m) => { recordMessage(m); persist(); },
     });
   }
 
@@ -203,6 +344,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       reason: executeResult.reason ?? "unspecified",
       ...(lastAssistant(executeResult.history) ? { lastAssistant: lastAssistant(executeResult.history)! } : {}),
     });
+    await cleanupMcp();
     return {
       session_id: session.meta.brief_id,
       final_phase: "blocker",
@@ -218,6 +360,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     persist();
     io.banner("Phase 2: Blocker (max_steps reached)");
     io.write(`Stopping: ${executeResult.reason}\n`);
+    await cleanupMcp();
     return {
       session_id: session.meta.brief_id,
       final_phase: "blocker",
@@ -231,7 +374,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   if (executeResult.outcome === "operator_done") {
     transition("completion", "operator ended");
     persist();
-    // Skip the model's completion report when the operator manually stopped.
+    await cleanupMcp();
     return {
       session_id: session.meta.brief_id,
       final_phase: "completion",
@@ -253,6 +396,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   recordMessage(finalReport);
   transition("done", "completion report delivered");
   persist();
+  await cleanupMcp();
 
   return {
     session_id: session.meta.brief_id,
@@ -274,6 +418,9 @@ function createSession(brief: Brief, briefId: string): SessionState {
     mode: null,
     destructive_approvals: [],
     transitions: [],
+    schema_version: 2,
+    session_approved_categories: [],
+    tool_calls: [],
   };
   return { meta, brief, messages: [] };
 }

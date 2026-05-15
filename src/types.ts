@@ -1,6 +1,11 @@
 // Public type surface for OpenWar runtime.
 // Anything exported from src/index.ts ultimately roots here.
 
+import type { ToolDefinition, ToolCall } from "./tools/types.js";
+
+// Re-export tool shapes so consumers can pull everything from one place.
+export type { ToolDefinition, ToolCall, ToolResult, ToolError, ToolResultMeta, ToolExecutor, JsonSchema, ToolOrigin } from "./tools/types.js";
+
 export type ExecutionMode = "gated" | "auto";
 
 export interface BriefFrontmatter {
@@ -10,6 +15,9 @@ export interface BriefFrontmatter {
   scope_locked: boolean;
   mode?: ExecutionMode;
   authorized_costs: string[];
+  // v0.3 additions. Optional; legacy briefs parse unchanged.
+  workdir?: string;
+  mcp_servers?: { name: string; command: string; cwd?: string }[];
 }
 
 export interface BriefSections {
@@ -127,14 +135,34 @@ export interface DetectorSnapshot {
 export interface SendMessageOptions {
   system: string;
   messages: Message[];
+  // Tool definitions the LLM may call this turn. Adapters translate to
+  // their provider's function-calling schema.
+  tools?: ToolDefinition[];
+  // Prior-turn tool calls the assistant produced. Paired with prior_tool_results.
+  // The adapter feeds these back to the LLM so it can react to results.
+  prior_tool_calls?: ToolCall[];
+  // Results from executing the prior_tool_calls. Same length, same call_ids.
+  prior_tool_results?: ToolResultForRound[];
   // Streaming is required; non-streaming adapters wrap their final
   // response into a single done event.
   signal?: AbortSignal;
 }
 
+// Tool result shape passed back to the LLM for the next turn. Smaller surface
+// than ToolResult (no meta), because the LLM only needs the text + error flag.
+export interface ToolResultForRound {
+  call_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
 export type StreamEvent =
   | { type: "text_delta"; delta: string }
-  | { type: "done"; message: string }
+  // Emitted incrementally as the LLM streams a tool call's JSON arguments.
+  | { type: "tool_call_arg_delta"; tool_call_id: string; name: string; arg_delta: string }
+  // Emitted once the tool call is fully assembled and ready to dispatch.
+  | { type: "tool_call_complete"; call: ToolCall }
+  | { type: "done"; message: string; tool_calls?: ToolCall[] }
   | { type: "error"; error: Error };
 
 export interface AgentAdapter {
@@ -165,12 +193,34 @@ export interface SessionMeta {
   mode: ExecutionMode | null;
   destructive_approvals: DestructiveApproval[];
   transitions: PhaseTransition[];
+  // Schema version. v1 sessions (pre-0.3) omit this; treat as 1.
+  schema_version?: number;
+  // Session-wide approved auth categories from Phase 3 (operator pressed Y).
+  session_approved_categories?: string[];
+  // Persisted tool-call records. Each entry records call + result + decision.
+  tool_calls?: ToolCallRecord[];
+}
+
+export interface ToolCallRecord {
+  call_id: string;
+  name: string;
+  arguments: unknown;
+  at: string; // ISO timestamp
+  authorized: boolean;
+  // Reason from auth check if denied (e.g., "missing: shell_exec").
+  auth_note?: string;
+  // Present when executed.
+  result?: { success: boolean; content: string; meta?: unknown };
 }
 
 export interface DestructiveApproval {
   at: string;
   action: string;
   approved: boolean;
+  // When set, this approval was for a tool call, and the listed auth
+  // categories were promoted to session-wide approval. Otherwise this was
+  // a one-shot approval (text-only destructive intent).
+  session_categories?: string[];
 }
 
 export interface SessionState {
@@ -197,6 +247,15 @@ export interface RunOptions {
   io?: RunnerIO;
   // Resume an existing session id if found.
   resume?: boolean;
+  // Tool calling. Override the workdir for the session (defaults to cwd).
+  workdir?: string;
+  // When true, disable shell_exec for this session even if authorized.
+  disableShell?: boolean;
+  // Extra MCP server configs passed in addition to ~/.openwar/mcp.json
+  // and brief.frontmatter.mcp_servers.
+  mcpServers?: { name: string; command: string; cwd?: string }[];
+  // Skip auto-registering native tools (tests / minimal runs).
+  disableNativeTools?: boolean;
 }
 
 export interface RunResult {

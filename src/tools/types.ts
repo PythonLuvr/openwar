@@ -8,6 +8,7 @@
 // These types are the contract every tool path must honor. Changes here ripple.
 
 import type { AuthCategory } from "../auth/categories.js";
+import type { SandboxContext } from "../sandbox/types.js";
 
 export type ToolOrigin = "native" | "mcp";
 
@@ -85,10 +86,7 @@ export interface ToolExecutor {
   (call: ToolCall, ctx: ToolExecutionContext): Promise<ToolResult>;
 }
 
-// Forward-declared here; concrete shape lives in src/sandbox/types.ts so the
-// sandbox module owns its surface.
-export interface ToolExecutionContext {
-  // The opaque sandbox marker. Tools receive this from the runtime and pass
-  // it back to sandbox helpers; they cannot mint a fresh one themselves.
-  readonly __sandbox: unknown;
-}
+// Concrete shape lives in src/sandbox/types.ts. Tools take this as their
+// runtime context; they cannot construct one because SandboxContext has a
+// private constructor and only the runner calls the underscored factory.
+export type ToolExecutionContext = SandboxContext;

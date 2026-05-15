@@ -1,4 +1,13 @@
-import type { AgentAdapter, SendMessageOptions, StreamEvent } from "../types.js";
+import type { AgentAdapter, SendMessageOptions, StreamEvent, ToolCall } from "../types.js";
+
+// One step in the mock script. Either a text response (string) or a
+// tool-using response (object with optional text + tool_calls).
+export type MockStep =
+  | string
+  | {
+      text?: string;
+      tool_calls?: ToolCall[];
+    };
 
 // Deterministic adapter for tests and offline development. Yields a scripted
 // sequence of responses. If the script is exhausted, returns an empty done
@@ -8,11 +17,11 @@ export class MockAdapter implements AgentAdapter {
   readonly name = "Mock (deterministic)";
   readonly model = "mock";
   private cursor = 0;
-  private readonly script: string[];
+  private readonly script: MockStep[];
   // Records every sendMessage call. Useful for assertions in tests.
   public readonly calls: SendMessageOptions[] = [];
 
-  constructor(script: string[] = []) {
+  constructor(script: MockStep[] = []) {
     this.script = script;
   }
 
@@ -22,12 +31,17 @@ export class MockAdapter implements AgentAdapter {
 
   async *sendMessage(opts: SendMessageOptions): AsyncIterable<StreamEvent> {
     this.calls.push(opts);
-    const message = this.script[this.cursor++] ?? "";
-    // Mimic streaming by chunking on whitespace.
-    const chunks = message.match(/\S+\s*|\s+/g) ?? [message];
+    const step = this.script[this.cursor++] ?? "";
+    const text = typeof step === "string" ? step : step.text ?? "";
+    const toolCalls = typeof step === "string" ? [] : step.tool_calls ?? [];
+
+    const chunks = text.match(/\S+\s*|\s+/g) ?? (text ? [text] : []);
     for (const chunk of chunks) {
       yield { type: "text_delta", delta: chunk };
     }
-    yield { type: "done", message };
+    for (const call of toolCalls) {
+      yield { type: "tool_call_complete", call };
+    }
+    yield { type: "done", message: text, tool_calls: toolCalls };
   }
 }

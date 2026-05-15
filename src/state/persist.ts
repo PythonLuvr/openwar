@@ -11,10 +11,30 @@ import { join } from "node:path";
 import type { SessionState } from "../types.js";
 import { sessionsDir, sessionFile } from "./paths.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 interface PersistedShape extends SessionState {
   schema_version: number;
+}
+
+// In-place upgrade for v1 sessions. v1 omitted schema_version,
+// session_approved_categories, and tool_calls on SessionMeta.
+function migrateToV2(parsed: PersistedShape & { schema_version?: number }): PersistedShape {
+  if (parsed.schema_version === SCHEMA_VERSION) return parsed;
+  if (parsed.schema_version === undefined || parsed.schema_version === 1) {
+    parsed.schema_version = SCHEMA_VERSION;
+    if (!parsed.meta.session_approved_categories) {
+      parsed.meta.session_approved_categories = [];
+    }
+    if (!parsed.meta.tool_calls) {
+      parsed.meta.tool_calls = [];
+    }
+    parsed.meta.schema_version = SCHEMA_VERSION;
+    return parsed;
+  }
+  throw new Error(
+    `Session schema version ${parsed.schema_version} is newer than this runtime (expects ${SCHEMA_VERSION}). Upgrade openwar.`,
+  );
 }
 
 export function ensureSessionsDir(): string {
@@ -49,11 +69,7 @@ export function readSession(briefId: string): SessionState | null {
   } catch (err) {
     throw new Error(`Session file at ${path} is not valid JSON: ${(err as Error).message}`);
   }
-  if (parsed.schema_version !== SCHEMA_VERSION) {
-    throw new Error(
-      `Session schema version ${parsed.schema_version} not supported by runtime (expected ${SCHEMA_VERSION}).`,
-    );
-  }
+  parsed = migrateToV2(parsed);
   // Discard the schema_version field at the API boundary.
   const { schema_version: _v, ...rest } = parsed;
   void _v;

@@ -1,6 +1,7 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import process from "node:process";
 import { run } from "./runner.js";
 import { parseBrief, validateBrief, generateBriefId } from "./brief.js";
@@ -9,6 +10,8 @@ import { listSessions, readSession } from "./state/persist.js";
 import { readTranscript } from "./state/transcript.js";
 import { createTerminalIO, styles } from "./io.js";
 import type { AdapterConfig, ExecutionMode } from "./types.js";
+import { listNativeDefinitions } from "./tools/native/index.js";
+import { loadGlobalMcpConfig, splitCommand, MCPClient, StdioTransport } from "./mcp/index.js";
 
 interface ParsedFlags {
   positional: string[];
@@ -66,12 +69,18 @@ function printHelp(): void {
 
 Usage:
   openwar run <brief.md> [--adapter <id>] [--model <name>] [--mode gated|auto]
-                         [--resume] [--ephemeral]
+                         [--workdir <path>] [--no-shell]
+                         [--mcp-server name=command] [--resume] [--ephemeral]
   openwar resume <brief_id>
   openwar list
   openwar inspect <brief_id> [--transcript]
   openwar validate <brief.md>
   openwar adapters
+  openwar tools
+  openwar mcp list
+  openwar mcp add <name> <command...>
+  openwar mcp remove <name>
+  openwar mcp test <name>
   openwar version
   openwar --help
 
@@ -123,6 +132,9 @@ async function commandRun(parsed: ParsedFlags): Promise<number> {
 
   const resume = parsed.flags["resume"] === true;
   const ephemeral = parsed.flags["ephemeral"] === true;
+  const workdir = typeof parsed.flags["workdir"] === "string" ? parsed.flags["workdir"] : undefined;
+  const disableShell = parsed.flags["no-shell"] === true;
+  const mcpServers = parseMcpServerFlags(parsed.flags["mcp-server"]);
 
   const io = createTerminalIO();
   io.write(
@@ -139,6 +151,9 @@ async function commandRun(parsed: ParsedFlags): Promise<number> {
       resume,
       ephemeral,
       ...(mode ? { mode } : {}),
+      ...(workdir ? { workdir } : {}),
+      ...(disableShell ? { disableShell } : {}),
+      ...(mcpServers.length > 0 ? { mcpServers } : {}),
     });
     io.write(
       `\n${styles.dim(
@@ -287,6 +302,124 @@ function commandAdapters(): number {
   return 0;
 }
 
+function commandTools(): number {
+  const defs = listNativeDefinitions();
+  const w = process.stdout.write.bind(process.stdout);
+  w(`Native tools (${defs.length}):\n\n`);
+  for (const d of defs) {
+    w(`  ${d.name.padEnd(14)}  cat: ${d.authorization_categories.join(", ")}\n`);
+    w(`  ${" ".repeat(14)}  ${d.description}\n\n`);
+  }
+  return 0;
+}
+
+function parseMcpServerFlags(value: string | boolean | undefined): { name: string; command: string }[] {
+  if (typeof value !== "string") return [];
+  // One or more --mcp-server name=command. The parser keeps only the last value
+  // when repeated; for multiple, callers use comma-separated entries.
+  const parts = value.split(",");
+  const out: { name: string; command: string }[] = [];
+  for (const part of parts) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const name = part.slice(0, eq).trim();
+    const command = part.slice(eq + 1).trim();
+    if (name && command) out.push({ name, command });
+  }
+  return out;
+}
+
+function mcpConfigPath(): string {
+  return join(homedir(), ".openwar", "mcp.json");
+}
+
+async function commandMcp(parsed: ParsedFlags): Promise<number> {
+  const sub = parsed.positional[1];
+  const w = process.stdout.write.bind(process.stdout);
+  if (sub === "list" || sub === undefined) {
+    const servers = await loadGlobalMcpConfig().catch(err => {
+      process.stderr.write(`openwar mcp: ${(err as Error).message}\n`);
+      return null;
+    });
+    if (servers === null) return 1;
+    if (servers.length === 0) {
+      w(`No MCP servers configured. Add one with: openwar mcp add <name> <command...>\n`);
+      return 0;
+    }
+    for (const s of servers) {
+      w(`${s.name.padEnd(20)}  ${s.command}\n`);
+    }
+    return 0;
+  }
+  if (sub === "add") {
+    const name = parsed.positional[2];
+    const command = parsed.positional.slice(3).join(" ");
+    if (!name || !command) {
+      process.stderr.write("openwar mcp add: needs <name> and <command...>\n");
+      return 2;
+    }
+    const path = mcpConfigPath();
+    mkdirSync(dirname(path), { recursive: true });
+    const existing = existsSync(path)
+      ? (JSON.parse(readFileSync(path, "utf8")) as { servers?: { name: string; command: string }[] })
+      : { servers: [] };
+    const servers = (existing.servers ?? []).filter(s => s.name !== name);
+    servers.push({ name, command });
+    writeFileSync(path, JSON.stringify({ servers }, null, 2), "utf8");
+    w(`Added "${name}" to ${path}\n`);
+    return 0;
+  }
+  if (sub === "remove") {
+    const name = parsed.positional[2];
+    if (!name) {
+      process.stderr.write("openwar mcp remove: needs <name>\n");
+      return 2;
+    }
+    const path = mcpConfigPath();
+    if (!existsSync(path)) {
+      w(`No mcp.json yet. Nothing to remove.\n`);
+      return 0;
+    }
+    const existing = JSON.parse(readFileSync(path, "utf8")) as { servers?: { name: string; command: string }[] };
+    const before = (existing.servers ?? []).length;
+    existing.servers = (existing.servers ?? []).filter(s => s.name !== name);
+    writeFileSync(path, JSON.stringify(existing, null, 2), "utf8");
+    w(`${before - existing.servers.length} entry/entries removed.\n`);
+    return 0;
+  }
+  if (sub === "test") {
+    const name = parsed.positional[2];
+    if (!name) {
+      process.stderr.write("openwar mcp test: needs <name>\n");
+      return 2;
+    }
+    const servers = await loadGlobalMcpConfig().catch(() => []);
+    const cfg = servers.find(s => s.name === name);
+    if (!cfg) {
+      process.stderr.write(`openwar mcp test: "${name}" not in config.\n`);
+      return 1;
+    }
+    try {
+      const { bin, args } = splitCommand(cfg.command);
+      const transport = new StdioTransport({ command: bin, args, defaultTimeoutMs: 5000 });
+      const client = new MCPClient({ transport });
+      await client.connect();
+      const tools = await client.listTools();
+      const info = client.getServerInfo();
+      w(`Connected to ${info?.name ?? cfg.name} (${info?.version ?? "?"})\n`);
+      w(`Protocol OK. ${tools.length} tool(s):\n`);
+      for (const t of tools) w(`  ${t.name}  ${t.description ?? ""}\n`);
+      await client.disconnect();
+      return 0;
+    } catch (err) {
+      process.stderr.write(`openwar mcp test: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
+  process.stderr.write(`openwar mcp: unknown subcommand "${sub}". See 'openwar --help'.\n`);
+  return 2;
+}
+
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
     printHelp();
@@ -313,6 +446,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return commandValidate(parsed);
     case "adapters":
       return commandAdapters();
+    case "tools":
+      return commandTools();
+    case "mcp":
+      return await commandMcp(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;
