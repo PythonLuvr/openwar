@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" aria-label="OpenWar">
+  <!-- Sibling to the War Room mark: same heater-shield silhouette + bevel,
+       but the crossed swords are swapped for a four-bar phase-stack that
+       represents the framework's phase architecture. -->
+
+  <!-- Shield: heater shape, identical proportions to war-room-logo -->
+  <path d="M128 24 L216 52 L216 132 C216 184 178 220 128 232 C78 220 40 184 40 132 L40 52 Z"
+        fill="#f5f5f5"/>
+
+  <!-- Inner shield bevel for depth -->
+  <path d="M128 38 L204 62 L204 130 C204 174 174 204 128 215 C82 204 52 174 52 130 L52 62 Z"
+        fill="#0a0a0a"/>
+
+  <!-- Phase stack: four horizontal bars centered in the shield. Wider on
+       top (Phase 0 is the longest — brief intake), tapering as the
+       phases progress. Reads as "ordered framework" at any size. -->
+
+  <!-- Phase 0 — full width -->
+  <rect x="68"  y="86"  width="120" height="14" rx="3" fill="#f5f5f5"/>
+  <!-- Phase 1 — slightly narrower -->
+  <rect x="76"  y="112" width="104" height="14" rx="3" fill="#f5f5f5"/>
+  <!-- Phase 2 / 3 — gates -->
+  <rect x="84"  y="138" width="88"  height="14" rx="3" fill="#f5f5f5"/>
+  <!-- Phase 4 — completion -->
+  <rect x="92"  y="164" width="72"  height="14" rx="3" fill="#f5f5f5"/>
+
+  <!-- Tiny accent: small dot to the left of Phase 0 marking the "start"
+       of the framework loop, echoing a step indicator. -->
+  <circle cx="58" cy="93" r="4" fill="#f5f5f5"/>
+</svg>
