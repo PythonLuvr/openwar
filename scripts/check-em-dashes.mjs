@@ -4,11 +4,14 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ROOT = process.cwd();
 const TARGETS = [".md", ".ts", ".mts", ".cts", ".mjs"];
 const SKIP = new Set(["node_modules", "dist", ".git", ".openwar", "coverage"]);
-const SELF = relative(ROOT, new URL(import.meta.url).pathname.replace(/^\//, ""));
+// fileURLToPath handles both Windows (file:///C:/...) and unix (file:///home/...)
+// URL shapes correctly; the prior manual leading-slash strip was Windows-only.
+const SELF = relative(ROOT, fileURLToPath(import.meta.url));
 
 const offenders = [];
 
