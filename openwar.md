@@ -243,6 +243,70 @@ Single-agent mode (omitting `roles:` or setting it to `[]`) keeps the v0.3 behav
 
 ---
 
+## Bridging to CLI agents (v0.5+)
+
+Most multi-agent frameworks assume every agent is an API call to an LLM provider. That covers a real slice of the market, but it's not what serious operators are actually running. The state of the practice in 2026 is hybrid: Claude Code drives the heavy local work, Codex CLI handles long refactors with native shell access, Gemini CLI does cheap bulk classification and multimodal ingestion, an API adapter picks up the cases where a fresh stateless model call is enough. The runtime is a coordinator; the *agents* are themselves complete harnesses with their own memory, tools, and conventions.
+
+OpenWar v0.5 introduces a `cli-bridge` adapter type that treats a CLI binary as an agent. The runtime delegates a brief (or a sub-task under multi-agent orchestration) to the CLI by shelling out, captures the output, and feeds it back into the phase machine the same way an LLM adapter's response is consumed.
+
+### Why bridge instead of replicate
+
+A CLI agent is not the same shape as an LLM API call. Claude Code persists session state across invocations, has its own approved-tool list, brings its own MCP servers, and has a session-resume model that OpenWar does not own. Trying to replicate Claude Code as a pure API adapter loses everything that makes it valuable.
+
+Bridging keeps the boundary clean. OpenWar owns *behavior*: confirmation summaries, phase gating, destructive-action prompts, the multi-agent coordinator. The CLI owns *execution*: tool calls, file editing, session memory, its native authorization model. The bridge passes the brief through and consumes whatever the CLI emits.
+
+This is the same boundary that makes Unix pipes work. OpenWar does not need to replace `claude` or `codex` any more than `bash` needs to replace `grep`. It coordinates them.
+
+### When to use the cli-bridge
+
+- **Heavy code work.** Claude Code with MCP servers and an established workdir is genuinely the right tool for a long refactor or a multi-file feature. Use the cli-bridge to delegate the executor role to Claude Code while the planner and reviewer roles run on a cheaper LLM adapter.
+- **Multimodal ingestion.** Gemini CLI reads PDFs, audio, and video natively. Route any sub-task that needs to consume a non-text file through Gemini CLI rather than pre-processing in OpenWar.
+- **Bulk classification or tagging.** A cheap CLI tier (Gemini Flash, Claude Haiku) processes hundreds of items at low cost. Use the cli-bridge for the bulk pass; route the summary back through a stronger model.
+- **Tools you already trust.** If your team already runs `aider`, `cursor-agent`, or a custom CLI for a specific task, the cli-bridge lets OpenWar coordinate them without rebuilding their capabilities.
+
+### When NOT to use it
+
+- **One-shot stateless work.** If the task is "answer this question," an API adapter is faster, cheaper, and more predictable. CLIs carry startup overhead.
+- **Tasks the runtime can do natively.** OpenWar v0.3 ships six native tools (read_file, write_file, list_dir, shell_exec, http_fetch, apply_patch). For simple filesystem and shell work, the native path is faster and has tighter sandbox guarantees than shelling out to a CLI that does the same thing.
+- **Anywhere voice consistency matters.** Different CLIs have different default voices. If a brief is producing client-facing output, pick one CLI (or one adapter) and stick with it. Mixing voices mid-brief reads as inconsistent.
+
+### How the phase machine applies across the bridge
+
+The framework still applies. The CLI is responsible for producing a Confirmation Summary in Phase 0, declaring blockers in Phase 2, and announcing destructive intent in Phase 3. The runtime's deterministic detectors run on the CLI's stdout the same way they run on an LLM adapter's stream.
+
+In practice this means CLIs that already implement OpenWar (via the system-prompt path, by pasting `openwar.md` into their own config) bridge cleanly. CLIs that don't are wrapped: the bridge prepends the framework as a prompt prefix to every invocation, and the operator accepts that the CLI may emit phase markers less reliably than a fresh-instructed LLM.
+
+### Authorization across the bridge
+
+The bridge itself is a `shell_exec` category from OpenWar's perspective. A brief that uses a `cli-bridge` adapter must include `shell_exec` in `authorized_costs`, or the first invocation halts on Phase 3 like any other unauthorized tool call.
+
+The CLI's *internal* authorization is its own business. Claude Code asks for its own approvals; OpenWar does not relitigate them. The boundary is: OpenWar gates the call to the CLI, the CLI gates whatever the CLI does internally.
+
+### Sub-task delegation in multi-agent mode
+
+Under multi-agent orchestration (v0.4+), the cli-bridge becomes role-scoped. A brief can configure the executor to be a cli-bridge while the planner and reviewer run on a different adapter:
+
+```yaml
+roles:
+  planner: { adapter: anthropic }
+  executor: { adapter: cli-bridge, binary: claude }
+  reviewer: { adapter: anthropic }
+```
+
+The planner produces a linear plan as usual. Each sub-task gets dispatched to Claude Code via the bridge. The reviewer reads the executor's output (and any files it modified in the workdir) and produces a verdict. The framework applies recursively: Claude Code is expected to follow Phase 0/2/3 per sub-task the same way an LLM adapter is.
+
+### What's NOT in v0.5
+
+v0.5 ships the bridge as a *stdout coordinator*. The first iteration does not include:
+
+- **Native tool-call translation.** The CLI is responsible for its own tools. OpenWar's tool-definition schema is not surfaced to bridged CLIs in v0.5. Operators wanting to share native tools between API agents and CLI agents wait for v0.5.1+.
+- **Bidirectional MCP brokering.** The CLI's MCP servers are the CLI's business. OpenWar's MCP servers are OpenWar's. No automatic forwarding.
+- **Session-state forwarding.** OpenWar's session persistence does not include the CLI's internal session ID. If the bridged CLI supports resume, the operator manages it through the CLI's own conventions.
+
+These are roadmap items, not omissions. The smaller surface area for v0.5 reduces the chance that a v1 design needs to be re-cut.
+
+---
+
 ## Versioning
 
-OpenWar is versioned. Current: v0.4 (framework doc + runtime + multi-agent orchestration). Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.4 (framework doc + runtime + multi-agent orchestration). v0.5 introduces the `cli-bridge` adapter type documented above; persistent project memory moves to v0.6, observability dashboards to v0.7. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.

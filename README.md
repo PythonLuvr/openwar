@@ -300,8 +300,9 @@ Current: **v0.4.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 - v0.2: runtime, CLI, BYOK adapters for Anthropic, OpenAI, Gemini, Grok, OpenAI-compat.
 - v0.3: six native tools (read_file, write_file, list_dir, shell_exec, http_fetch, apply_patch), hand-rolled MCP client, per-adapter tool-call translation, Phase 3 destructive flag for unauthorized tool calls.
 - v0.4: multi-agent orchestration. Coordinator FSM, planner / executor / reviewer / critic roles, typed handoffs, per-role tool scoping, budgets, schema v3 with v2 migration, `openwar plan` and `openwar roles` subcommands.
-- v0.5: persistent project memory across briefs.
-- v0.6: observability dashboards / tracing UI.
+- v0.5: `cli-bridge` adapter. OpenWar coordinates CLI agents (Claude Code, Codex CLI, Gemini CLI, aider, etc) the same way it coordinates LLM adapters. The CLI is the executor; OpenWar is the phase machine wrapped around it. See the "Bridging to CLI agents" section in [`openwar.md`](./openwar.md).
+- v0.6: persistent project memory across briefs.
+- v0.7: observability dashboards / tracing UI.
 
 Framework doc is versioned with the package. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format.
 
