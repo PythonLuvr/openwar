@@ -38,13 +38,13 @@ The framework doc and the runtime are the same source of truth. The doc tells th
 ## Quick start (runtime)
 
 ```bash
-npx pythonluvr/openwar run examples/creative-brief.md --adapter anthropic
+npx @pythonluvr/openwar run examples/creative-brief.md --adapter anthropic
 ```
 
 Or install:
 
 ```bash
-npm install -g pythonluvr/openwar
+npm install -g @pythonluvr/openwar
 export ANTHROPIC_API_KEY=...
 openwar run examples/engineering-brief.md
 ```

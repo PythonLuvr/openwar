@@ -7,7 +7,7 @@ Seven reference briefs you can run end-to-end against any configured adapter.
 A copywriting task with gated execution. Demonstrates frontmatter with `scope_locked: false`, `mode: gated`, and a soft `generation_credits` pre-approval.
 
 ```bash
-npx openwar run examples/creative-brief.md --adapter anthropic
+npx @pythonluvr/openwar run examples/creative-brief.md --adapter anthropic
 ```
 
 ## engineering-brief.md
@@ -15,7 +15,7 @@ npx openwar run examples/creative-brief.md --adapter anthropic
 A code task with auto-pilot execution and a locked scope. Demonstrates `scope_locked: true`, `mode: auto`, and `filesystem_write` pre-approved.
 
 ```bash
-npx openwar run examples/engineering-brief.md --adapter openai --model gpt-4o
+npx @pythonluvr/openwar run examples/engineering-brief.md --adapter openai --model gpt-4o
 ```
 
 ## file-editing-brief.md (v0.3+, requires tools)
@@ -23,7 +23,7 @@ npx openwar run examples/engineering-brief.md --adapter openai --model gpt-4o
 A real refactor: rename a symbol across every `.ts` file in the workdir. Demonstrates `read_file`, `list_dir`, and `apply_patch` native tools with `filesystem_write` pre-approved.
 
 ```bash
-npx openwar run examples/file-editing-brief.md --adapter anthropic --workdir ./your-project
+npx @pythonluvr/openwar run examples/file-editing-brief.md --adapter anthropic --workdir ./your-project
 ```
 
 ## research-brief.md (v0.3+, requires tools + network)
@@ -31,7 +31,7 @@ npx openwar run examples/file-editing-brief.md --adapter anthropic --workdir ./y
 Fetch three GitHub README files and save them locally. Demonstrates `http_fetch` and `write_file`. If you have `~/.openwar/http-allow.json` configured, allow `*.githubusercontent.com` first.
 
 ```bash
-npx openwar run examples/research-brief.md --adapter anthropic
+npx @pythonluvr/openwar run examples/research-brief.md --adapter anthropic
 ```
 
 ## mcp-brief.md (v0.3+, requires MCP)
@@ -39,7 +39,7 @@ npx openwar run examples/research-brief.md --adapter anthropic
 Survey the workdir through the official Filesystem MCP server. Demonstrates `mcp_servers` in frontmatter and the `mcp_tool:filesystem:*` wildcard.
 
 ```bash
-npx openwar run examples/mcp-brief.md --adapter anthropic
+npx @pythonluvr/openwar run examples/mcp-brief.md --adapter anthropic
 ```
 
 ## multi-agent-brief.md (v0.4+, multi-agent)
@@ -48,10 +48,10 @@ A small static-site generator built with the three default roles (planner, execu
 
 ```bash
 # Dry-run the plan first (no execution, no spending).
-npx openwar plan examples/multi-agent-brief.md --adapter anthropic
+npx @pythonluvr/openwar plan examples/multi-agent-brief.md --adapter anthropic
 
 # Full run.
-npx openwar run examples/multi-agent-brief.md --adapter anthropic
+npx @pythonluvr/openwar run examples/multi-agent-brief.md --adapter anthropic
 ```
 
 ## critic-disagreement-brief.md (v0.4+, four-role)
@@ -59,7 +59,7 @@ npx openwar run examples/multi-agent-brief.md --adapter anthropic
 A tiny leap-year function with all four roles enabled (planner, executor, reviewer, critic). When the critic disagrees with the reviewer the coordinator halts on Phase 2 and asks the operator to pick a verdict.
 
 ```bash
-npx openwar run examples/critic-disagreement-brief.md --adapter anthropic
+npx @pythonluvr/openwar run examples/critic-disagreement-brief.md --adapter anthropic
 ```
 
 ## Inspecting after the run

@@ -1,5 +1,5 @@
 {
-  "name": "openwar",
+  "name": "@pythonluvr/openwar",
   "version": "0.4.0",
   "description": "Runtime that enforces the OpenWar framework: phase-aware agent loop with confirmation, blocker, and destructive-action gates.",
   "license": "MIT",
