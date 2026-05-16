@@ -35,7 +35,32 @@ The framework doc and the runtime are the same source of truth. The doc tells th
   <em>Phase 0 in one image. What are you shipping today, ops?</em>
 </p>
 
-## Quick start (runtime)
+## Try it with zero setup
+
+Three ways to use OpenWar without an API key, a paid call, or even Node:
+
+**1. As a system prompt.** Paste [`openwar.md`](./openwar.md) into Claude Code's CLAUDE.md, Cursor's rules, or any agent's system prompt. The framework activates immediately on whatever model that tool already uses.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pythonluvr/openwar/main/openwar.md >> ~/.claude/CLAUDE.md
+```
+
+**2. Against a local model.** If you already run Ollama, llama.cpp, vLLM, or LM Studio:
+
+```bash
+npx @pythonluvr/openwar run examples/creative-brief.md \
+  --adapter openai-compat \
+  --base-url http://localhost:11434/v1 \
+  --model llama3.1
+```
+
+**3. Just validate a brief.** No model call, just the framework's lint pass:
+
+```bash
+npx @pythonluvr/openwar validate examples/multi-agent-brief.md
+```
+
+## Quick start (runtime, BYO cloud key)
 
 ```bash
 npx @pythonluvr/openwar run examples/creative-brief.md --adapter anthropic
