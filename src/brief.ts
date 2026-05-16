@@ -8,6 +8,7 @@ import type {
   ValidationIssue,
   ExecutionMode,
 } from "./types.js";
+import { listRoleIds } from "./roles/registry.js";
 
 // ---------- Public API ----------
 
@@ -35,9 +36,26 @@ export function parseBrief(input: string): Brief {
   };
 }
 
-export function validateBrief(brief: Brief): ValidationResult {
+export interface ValidateBriefOptions {
+  // Known role ids the brief may reference. When omitted, validation falls
+  // back to the role registry's current contents (built-ins plus any
+  // `registerRole()` additions). Callers that want to validate against a
+  // closed set (tests, CLI dry-runs) pass an explicit list.
+  knownRoles?: readonly string[];
+}
+
+const BUILT_IN_ROLE_IDS = ["planner", "executor", "reviewer", "critic"] as const;
+
+function resolveKnownRoles(options: ValidateBriefOptions): Set<string> {
+  if (options.knownRoles) return new Set(options.knownRoles);
+  const ids = listRoleIds();
+  return ids.length > 0 ? new Set(ids) : new Set(BUILT_IN_ROLE_IDS);
+}
+
+export function validateBrief(brief: Brief, options: ValidateBriefOptions = {}): ValidationResult {
   const issues: ValidationIssue[] = [];
   const fm = brief.frontmatter;
+  const knownRoles = resolveKnownRoles(options);
 
   if (!fm.project) {
     issues.push({
@@ -99,6 +117,50 @@ export function validateBrief(brief: Brief): ValidationResult {
       message: "section is empty; consider adding scope guardrails",
       severity: "warning",
     });
+  }
+
+  // v0.4: roles validation. Unknown ids are errors; empty list means
+  // explicit single-agent mode (valid).
+  if (fm.roles) {
+    for (const r of fm.roles) {
+      if (!knownRoles.has(r)) {
+        issues.push({
+          field: "roles",
+          message: `unknown role "${r}". Registered: ${[...knownRoles].join(", ")}`,
+          severity: "error",
+        });
+      }
+    }
+    // Planner is the only role allowed to plan; if multi-agent mode is
+    // requested at all, planner must be present.
+    if (fm.roles.length > 0 && !fm.roles.includes("planner")) {
+      issues.push({
+        field: "roles",
+        message: 'multi-agent mode requires "planner" in the roles list',
+        severity: "error",
+      });
+    }
+    // Executor is required for any concrete work; reviewer is the quality gate.
+    if (fm.roles.length > 0 && !fm.roles.includes("executor")) {
+      issues.push({
+        field: "roles",
+        message: 'multi-agent mode requires "executor" in the roles list',
+        severity: "error",
+      });
+    }
+  }
+
+  // v0.4: budgets validation. Non-positive values are errors.
+  if (fm.budgets) {
+    for (const [k, v] of Object.entries(fm.budgets)) {
+      if (typeof v !== "number" || v <= 0 || !Number.isFinite(v)) {
+        issues.push({
+          field: `budgets.${k}`,
+          message: "must be a positive number",
+          severity: "error",
+        });
+      }
+    }
   }
 
   return {
@@ -173,7 +235,10 @@ function splitFrontmatter(raw: string): { frontmatter: string; body: string } {
 //   key:                  (followed by indented list)
 //     - item
 //     - item
-// No nested maps, no quoted multilines, no anchors. Comments after # ok.
+//   key:                  (followed by an indented nested map of scalars)
+//     subkey: value
+//     subkey: value
+// No deep nesting, no quoted multilines, no anchors. Comments after # ok.
 function parseFrontmatter(text: string): BriefFrontmatter {
   const out: Record<string, unknown> = {};
   const lines = text.split(/\r?\n/);
@@ -194,25 +259,62 @@ function parseFrontmatter(text: string): BriefFrontmatter {
     const rawValue = stripComment(m[2] ?? "").trim();
 
     if (rawValue === "") {
-      // Maybe a list follows on subsequent indented lines.
-      const items: string[] = [];
+      // Lookahead: list, nested map, or empty.
+      // 1) List: next non-blank indented line starts with "-".
+      // 2) Nested map: next non-blank indented line has `subkey: scalar`.
       let j = i + 1;
+      // Skip blanks/comments to peek.
       while (j < lines.length) {
         const ln = lines[j] ?? "";
-        if (!ln.trim()) {
+        if (!ln.trim() || ln.trim().startsWith("#")) {
           j++;
           continue;
         }
-        const lm = /^(\s+)-\s+(.+)$/.exec(ln);
-        if (!lm) break;
-        items.push(stripComment(lm[2]!).trim());
-        j++;
+        break;
       }
-      if (items.length > 0) {
+      const peek = lines[j] ?? "";
+      const listLead = /^(\s+)-\s+(.+)$/.exec(peek);
+      const mapLead = /^(\s+)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(peek);
+
+      if (listLead) {
+        const items: unknown[] = [];
+        while (j < lines.length) {
+          const ln = lines[j] ?? "";
+          if (!ln.trim()) { j++; continue; }
+          if (ln.trim().startsWith("#")) { j++; continue; }
+          const lm = /^(\s+)-\s+(.+)$/.exec(ln);
+          if (!lm) break;
+          // List items run through the same scalar coercion as plain keys so
+          // quote-wrapped tokens (e.g. "*") arrive without their quotes.
+          items.push(coerceScalar(stripComment(lm[2]!).trim()));
+          j++;
+        }
         out[key] = items;
         i = j;
         continue;
       }
+
+      if (mapLead) {
+        const nested: Record<string, unknown> = {};
+        const leadIndent = mapLead[1]!.length;
+        while (j < lines.length) {
+          const ln = lines[j] ?? "";
+          if (!ln.trim()) { j++; continue; }
+          if (ln.trim().startsWith("#")) { j++; continue; }
+          const sub = /^(\s+)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(ln);
+          if (!sub) break;
+          if (sub[1]!.length < leadIndent) break;
+          const subkey = sub[2]!;
+          const subval = stripComment(sub[3] ?? "").trim();
+          if (subval === "") break; // nested-nested not supported here
+          nested[subkey] = coerceScalar(subval);
+          j++;
+        }
+        out[key] = nested;
+        i = j;
+        continue;
+      }
+
       out[key] = "";
       i++;
       continue;
@@ -292,6 +394,50 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     if (mcp_servers.length === 0) mcp_servers = undefined;
   }
 
+  // v0.4: roles list (string[]). Supports several spellings:
+  //   roles:
+  //     - planner
+  //   roles: planner,executor,reviewer
+  //   roles: []     # explicit single-agent mode
+  let roles: string[] | undefined;
+  if (Array.isArray(raw.roles)) {
+    roles = raw.roles
+      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      .map((v) => v.trim());
+  } else if (typeof raw.roles === "string") {
+    const trimmed = raw.roles.trim();
+    if (trimmed === "[]") {
+      roles = [];
+    } else {
+      const items = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+      if (items.length > 0) roles = items;
+    }
+  }
+
+  // v0.4: budgets nested map.
+  let budgets: BriefFrontmatter["budgets"];
+  if (raw.budgets && typeof raw.budgets === "object" && !Array.isArray(raw.budgets)) {
+    const b = raw.budgets as Record<string, unknown>;
+    budgets = {};
+    const num = (v: unknown): number | undefined => {
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
+      if (typeof v === "string" && /^-?\d+$/.test(v.trim())) {
+        const n = Number(v.trim());
+        return Number.isFinite(n) && n >= 0 ? n : undefined;
+      }
+      return undefined;
+    };
+    const mt = num(b.max_tokens);
+    const mw = num(b.max_wall_clock_minutes);
+    const mtc = num(b.max_tool_calls_per_subtask);
+    const mr = num(b.max_retries_per_subtask);
+    if (mt !== undefined) budgets.max_tokens = mt;
+    if (mw !== undefined) budgets.max_wall_clock_minutes = mw;
+    if (mtc !== undefined) budgets.max_tool_calls_per_subtask = mtc;
+    if (mr !== undefined) budgets.max_retries_per_subtask = mr;
+    if (Object.keys(budgets).length === 0) budgets = undefined;
+  }
+
   return {
     project,
     ...(brief_id ? { brief_id } : {}),
@@ -301,6 +447,8 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     authorized_costs,
     ...(workdir ? { workdir } : {}),
     ...(mcp_servers ? { mcp_servers } : {}),
+    ...(roles ? { roles } : {}),
+    ...(budgets ? { budgets } : {}),
   };
 }
 

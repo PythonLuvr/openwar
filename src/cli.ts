@@ -71,10 +71,14 @@ Usage:
   openwar run <brief.md> [--adapter <id>] [--model <name>] [--mode gated|auto]
                          [--workdir <path>] [--no-shell]
                          [--mcp-server name=command] [--resume] [--ephemeral]
+                         [--roles planner,executor,reviewer[,critic]]
+                         [--max-tokens N] [--max-minutes N] [--single]
   openwar resume <brief_id>
   openwar list
   openwar inspect <brief_id> [--transcript]
   openwar validate <brief.md>
+  openwar plan <brief.md> [--adapter <id>] [--model <name>]
+  openwar roles
   openwar adapters
   openwar tools
   openwar mcp list
@@ -136,6 +140,26 @@ async function commandRun(parsed: ParsedFlags): Promise<number> {
   const disableShell = parsed.flags["no-shell"] === true;
   const mcpServers = parseMcpServerFlags(parsed.flags["mcp-server"]);
 
+  // v0.4 multi-agent flags.
+  let runtimeRoles: string[] | undefined;
+  if (parsed.flags["single"] === true) {
+    runtimeRoles = [];
+  } else if (typeof parsed.flags["roles"] === "string") {
+    runtimeRoles = parsed.flags["roles"]
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  const runtimeBudgets: Record<string, number> = {};
+  if (typeof parsed.flags["max-tokens"] === "string") {
+    const n = Number(parsed.flags["max-tokens"]);
+    if (Number.isFinite(n) && n > 0) runtimeBudgets.max_tokens = n;
+  }
+  if (typeof parsed.flags["max-minutes"] === "string") {
+    const n = Number(parsed.flags["max-minutes"]);
+    if (Number.isFinite(n) && n > 0) runtimeBudgets.max_wall_clock_minutes = n;
+  }
+
   const io = createTerminalIO();
   io.write(
     `${styles.dim(
@@ -154,6 +178,8 @@ async function commandRun(parsed: ParsedFlags): Promise<number> {
       ...(workdir ? { workdir } : {}),
       ...(disableShell ? { disableShell } : {}),
       ...(mcpServers.length > 0 ? { mcpServers } : {}),
+      ...(runtimeRoles !== undefined ? { runtimeRoles } : {}),
+      ...(Object.keys(runtimeBudgets).length > 0 ? { runtimeBudgets } : {}),
     });
     io.write(
       `\n${styles.dim(
@@ -313,6 +339,115 @@ function commandTools(): number {
   return 0;
 }
 
+// v0.4: list registered orchestration roles.
+async function commandRoles(): Promise<number> {
+  const { listRoles } = await import("./roles/registry.js");
+  const defs = listRoles();
+  const w = process.stdout.write.bind(process.stdout);
+  w(`Registered roles (${defs.length}):\n\n`);
+  for (const d of defs) {
+    const scope = d.tool_categories.length === 0
+      ? d.allow_read_file ? "read_file only" : "no tools"
+      : d.tool_categories.join(", ");
+    w(`  ${d.id.padEnd(10)}  tool scope: ${scope}\n`);
+    w(`  ${" ".repeat(10)}  ${d.description}\n\n`);
+  }
+  return 0;
+}
+
+// v0.4: planner dry-run. Loads the brief, invokes only the planner role,
+// prints the resulting plan handoff, and exits. No execution side effects.
+async function commandPlan(parsed: ParsedFlags): Promise<number> {
+  const briefPath = parsed.positional[1];
+  if (!briefPath) {
+    process.stderr.write("openwar plan: missing <brief.md> argument\n");
+    return 2;
+  }
+  const adapterId = (parsed.flags["adapter"] as string | undefined) ?? "anthropic";
+  const config: AdapterConfig = { id: adapterId };
+  if (typeof parsed.flags["model"] === "string") config.model = parsed.flags["model"];
+  if (typeof parsed.flags["base-url"] === "string") config.baseUrl = parsed.flags["base-url"];
+
+  let adapter;
+  try {
+    adapter = makeAdapter(config);
+  } catch (err) {
+    process.stderr.write(`openwar plan: ${(err as Error).message}\n`);
+    return 2;
+  }
+  if (!adapter.isConfigured()) {
+    process.stderr.write(
+      `openwar plan: adapter "${adapter.id}" not configured (missing API key env var).\n`,
+    );
+    return 2;
+  }
+
+  const { parsePlanFromText, scopeWarningsForPlan } = await import("./coordinator/plan-parser.js");
+  const { buildSystemPrompt } = await import("./roles/prompt-overlay.js");
+  const { getRole } = await import("./roles/registry.js");
+  const { loadFrameworkDoc } = await import("./framework.js");
+  const planner = getRole("planner");
+  if (!planner) {
+    process.stderr.write("openwar plan: planner role not registered.\n");
+    return 1;
+  }
+  const framework = loadFrameworkDoc();
+  const brief = parseBrief(resolve(briefPath));
+  const system = buildSystemPrompt({
+    framework,
+    brief,
+    role: planner,
+    extra: "This is a dry-run plan request. Do not execute. Just produce the plan handoff.",
+  });
+  const userTurn = "Decompose this brief into linear sub-tasks. End with the fenced JSON plan handoff.";
+
+  const io = createTerminalIO();
+  io.write(`${styles.dim(`openwar plan v${getPackageVersion()}  adapter=${adapter.id}  model=${adapter.model}`)}\n`);
+  io.banner("planner (dry-run)");
+  let assembled = "";
+  for await (const ev of adapter.sendMessage({
+    system,
+    messages: [{
+      role: "user",
+      content: userTurn,
+      at: new Date().toISOString(),
+    }],
+  })) {
+    if (ev.type === "text_delta") {
+      io.write(ev.delta);
+      assembled += ev.delta;
+    } else if (ev.type === "done") {
+      io.write("\n");
+      if (ev.message && ev.message.length >= assembled.length) assembled = ev.message;
+      break;
+    } else if (ev.type === "error") {
+      process.stderr.write(`\nopenwar plan: ${ev.error.message}\n`);
+      return 1;
+    }
+  }
+  const parsedPlan = parsePlanFromText(assembled);
+  if (!parsedPlan.ok) {
+    process.stderr.write(`\nopenwar plan: planner output invalid (${parsedPlan.reason}): ${parsedPlan.message}\n`);
+    return 1;
+  }
+  io.banner("Plan summary");
+  const w = process.stdout.write.bind(process.stdout);
+  w(`Rationale: ${parsedPlan.plan.rationale || "(none)"}\n\n`);
+  w(`Sub-tasks (${parsedPlan.plan.subtasks.length}):\n`);
+  for (const st of parsedPlan.plan.subtasks) {
+    w(`  ${st.order + 1}. ${st.title}\n`);
+    w(`     id: ${st.id}\n`);
+    w(`     instruction: ${st.instruction}\n`);
+    w(`     acceptance: ${st.acceptance_criteria.length}\n`);
+  }
+  const warns = scopeWarningsForPlan(parsedPlan.plan, brief);
+  if (warns.length > 0) {
+    w(`\nScope warnings (non-blocking):\n`);
+    for (const wnote of warns) w(`  ${wnote.subtask_id}: ${wnote.category} (match: ${wnote.match})\n`);
+  }
+  return 0;
+}
+
 function parseMcpServerFlags(value: string | boolean | undefined): { name: string; command: string }[] {
   if (typeof value !== "string") return [];
   // One or more --mcp-server name=command. The parser keeps only the last value
@@ -450,6 +585,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return commandTools();
     case "mcp":
       return await commandMcp(parsed);
+    case "roles":
+      return await commandRoles();
+    case "plan":
+      return await commandPlan(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;

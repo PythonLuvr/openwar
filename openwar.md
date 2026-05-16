@@ -1,4 +1,4 @@
-# OpenWar v0.3: operating framework
+# OpenWar v0.4: operating framework
 
 You are an AI agent operating under the **OpenWar** framework. This document defines how you take work, execute it, communicate, and stop.
 
@@ -157,6 +157,19 @@ scope_locked: true|false           # if true, refuse out-of-scope additions
 mode: gated|auto                   # optional override of per-step-vs-auto
 authorized_costs:                  # optional, pre-approves these cost types
   - <cost-type>
+workdir: <path>                    # v0.3, optional; tool sandbox root
+mcp_servers:                       # v0.3, optional
+  - <name>=<command>
+roles:                             # v0.4, optional; omit for single-agent
+  - planner
+  - executor
+  - reviewer
+  # - critic
+budgets:                           # v0.4, optional
+  max_tokens: 50000
+  max_wall_clock_minutes: 20
+  max_tool_calls_per_subtask: 15
+  max_retries_per_subtask: 3
 ---
 ```
 
@@ -182,6 +195,54 @@ The framework doc and the runtime share the same source of truth. The doc tells 
 
 ---
 
+## Multi-agent orchestration
+
+OpenWar v0.4 adds optional multi-agent coordination on top of the phase machine. When a brief sets `roles:` in its frontmatter, the runtime stops running one agent against the whole brief and instead orchestrates a small team of role-scoped agents.
+
+The framework applies recursively. Every role's output passes through the same detectors as a single-agent run. Every executor sub-task gets its own Phase 0 (confirm the sub-task, then execute). Phase 2 (blocker) and Phase 3 (destructive flag) fire inside the role that triggered them and propagate up to the coordinator.
+
+### Built-in roles
+
+- **planner**: receives the brief, produces a linear ordered list of sub-tasks with acceptance criteria. No tool access.
+- **executor**: receives one sub-task at a time. Uses the v0.3 tool layer (files, shell, http, MCP) under the brief's authorized_costs. Standard Phase 3 gates apply.
+- **reviewer**: evaluates the executor's output against the sub-task's acceptance criteria. Read-only filesystem access for verification. Emits pass / fail / needs_retry.
+- **critic** (optional): independent second-opinion reviewer. Runs after the reviewer. Disagreement halts the coordinator into Phase 2 for an operator decision.
+
+### Coordinator states
+
+    init -> plan -> dispatch -> execute -> review_step ->
+      next_subtask -> dispatch (next) | complete
+    any -> block | escalate
+
+
+The coordinator persists its state after every transition. Resuming a halted run picks up at the next state without replay.
+
+### Handoffs
+
+Roles communicate via typed JSON handoffs (`plan`, `execution`, `review`, `escalation`) emitted as fenced JSON blocks at the end of the role's reply. The coordinator validates each handoff against a strict schema; malformed handoffs trigger one retry, then escalation.
+
+### Budgets
+
+Briefs may set per-run budgets:
+
+- `max_tokens`: run-wide token ceiling (estimated chars/4 unless the adapter reports usage).
+- `max_wall_clock_minutes`: run-wide wall-clock ceiling.
+- `max_tool_calls_per_subtask`: per-sub-task tool-call ceiling.
+- `max_retries_per_subtask`: how many times the reviewer may demand a retry before escalation.
+
+Hitting any ceiling halts the coordinator cleanly. State persists; the operator can extend the budget and resume.
+
+### Role scope versus brief authorization
+
+Two independent checks gate every tool call:
+
+1. **Role scope** (structural): does the role's allowlist include this tool's category? Failure here means the coordinator routed a call to the wrong role; this is a programming error and halts the run with no operator prompt.
+2. **Brief authorization** (operator decision): does the brief's authorized_costs cover the tool's categories? Failure here triggers the v0.3 Phase 3 prompt for an explicit per-session approval.
+
+Single-agent mode (omitting `roles:` or setting it to `[]`) keeps the v0.3 behavior. The coordinator is opt-in.
+
+---
+
 ## Versioning
 
-OpenWar is versioned. Current: v0.2 (framework doc + runtime). Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.4 (framework doc + runtime + multi-agent orchestration). Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.

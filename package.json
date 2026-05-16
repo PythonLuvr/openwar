@@ -1,6 +1,6 @@
 {
   "name": "openwar",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Runtime that enforces the OpenWar framework: phase-aware agent loop with confirmation, blocker, and destructive-action gates.",
   "license": "MIT",
   "type": "module",
@@ -39,10 +39,12 @@
     "prepublishOnly": "npm run clean && npm run build",
     "test": "node scripts/run-tests.mjs",
     "test:watch": "node scripts/run-tests.mjs --watch",
+    "test:coverage": "node scripts/check-coverage.mjs",
     "lint:em-dashes": "node scripts/check-em-dashes.mjs",
     "lint:sanity": "node scripts/check-sanity.mjs",
     "lint": "npm run lint:em-dashes && npm run lint:sanity",
-    "check": "npm run lint && npm run build && npm run test"
+    "check": "npm run lint && npm run build && npm run test",
+    "check:strict": "npm run lint && npm run build && npm run test:coverage"
   },
   "engines": {
     "node": ">=20"

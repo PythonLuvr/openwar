@@ -38,7 +38,9 @@ test("readSession migrates a v1 file in place", async () => {
   assert.equal(loaded!.meta.brief_id, "2026-05-15-v1test");
   assert.deepEqual(loaded!.meta.session_approved_categories, []);
   assert.deepEqual(loaded!.meta.tool_calls, []);
-  assert.equal(loaded!.meta.schema_version, 2);
+  // Bumped to 3 in v0.4 (additional coordinator-state fields appended on top
+  // of the v2 shape). Migration is still idempotent for the v2 entries above.
+  assert.equal(loaded!.meta.schema_version, 3);
   await rm(home, { recursive: true, force: true });
 });
 

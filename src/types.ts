@@ -18,6 +18,14 @@ export interface BriefFrontmatter {
   // v0.3 additions. Optional; legacy briefs parse unchanged.
   workdir?: string;
   mcp_servers?: { name: string; command: string; cwd?: string }[];
+  // v0.4 additions. Optional; omitted = single-agent mode (v0.3 behavior).
+  roles?: string[];
+  budgets?: Partial<{
+    max_tokens: number;
+    max_wall_clock_minutes: number;
+    max_tool_calls_per_subtask: number;
+    max_retries_per_subtask: number;
+  }>;
 }
 
 export interface BriefSections {
@@ -61,10 +69,15 @@ export interface PhaseTransition {
 
 // ---------- Conversation ----------
 
-export type Role = "system" | "user" | "assistant";
+// The role on a chat turn. Renamed from `Role` in v0.4 because that name now
+// belongs to the orchestration role system. `Role` remains as a back-compat
+// alias for one minor cycle.
+export type MessageRole = "system" | "user" | "assistant";
+/** @deprecated Use MessageRole. Will be removed in a future minor. */
+export type Role = MessageRole;
 
 export interface Message {
-  role: Role;
+  role: MessageRole;
   content: string;
   at: string; // ISO timestamp
   // Optional metadata. Set by phase handlers, never by the adapter.
@@ -72,6 +85,11 @@ export interface Message {
     phase?: Phase;
     step_index?: number;
     detectors?: DetectorSnapshot;
+    // v0.4: which orchestration role produced this turn (planner/executor/...).
+    // null on operator and intake turns.
+    orch_role?: RoleId | null;
+    // v0.4: sub-task id when this turn belongs to a coordinator sub-task.
+    subtask_id?: string;
   };
 }
 
@@ -256,6 +274,17 @@ export interface RunOptions {
   mcpServers?: { name: string; command: string; cwd?: string }[];
   // Skip auto-registering native tools (tests / minimal runs).
   disableNativeTools?: boolean;
+  // v0.4: CLI override of the brief's roles list. `[]` forces single-agent
+  // mode even if the brief opted into multi-agent (--single flag).
+  runtimeRoles?: string[];
+  // v0.4: CLI override of the brief's budgets. Partial; only specified
+  // fields override.
+  runtimeBudgets?: Partial<{
+    max_tokens: number;
+    max_wall_clock_minutes: number;
+    max_tool_calls_per_subtask: number;
+    max_retries_per_subtask: number;
+  }>;
 }
 
 export interface RunResult {
@@ -280,4 +309,266 @@ export interface RunnerIO {
   prompt(question: string): Promise<string>;
   // Yes/no helper. Returns true only on explicit affirmative.
   confirm(question: string): Promise<boolean>;
+}
+
+// ===========================================================================
+// v0.4 Multi-agent orchestration
+// ===========================================================================
+//
+// Single-agent mode (v0.3) corresponds to `roles: []` in a brief; the runner
+// short-circuits the coordinator and runs the existing phase loop. Anything
+// else routes through the coordinator FSM in src/coordinator/.
+
+// ---------- Roles ----------
+
+// Built-in role ids. Custom roles register additional ids via
+// `registerRole()` from src/roles/registry.ts. The string is the canonical
+// identifier the coordinator dispatches by.
+export type BuiltInRoleId = "planner" | "executor" | "reviewer" | "critic";
+// Open-ended at runtime; `BuiltInRoleId | string` collapses to `string` in
+// TypeScript, so we widen explicitly.
+export type RoleId = string;
+
+// A role definition is a static description of how to instantiate one
+// instance of the role. The dynamic per-call data lives in `RoleContext`.
+export interface RoleDefinition {
+  id: RoleId;
+  // One-line description shown by `openwar roles`.
+  description: string;
+  // System-prompt overlay appended to the framework + brief. The overlay
+  // never overrides the framework's hard rules; it adds scope on top.
+  prompt_overlay: string;
+  // Auth categories this role is allowed to request via tool calls. The
+  // coordinator enforces this at dispatch time: a role attempting a tool
+  // outside its allowlist halts the coordinator with a structured error,
+  // not a Phase 3 prompt. The auth-categories `"*"` wildcard is honored.
+  tool_categories: string[];
+  // If true the role is allowed to call read_file (and similar read-only
+  // native tools). Independent from tool_categories so a role can have
+  // `tool_categories: []` but still verify executor claims.
+  allow_read_file?: boolean;
+}
+
+// Context the coordinator passes to a role when invoking it.
+export interface RoleContext {
+  brief: Brief;
+  // The role's accumulating message history for this run. Distinct from
+  // the session's global transcript; each role sees only what the
+  // coordinator has handed it.
+  history: Message[];
+  // Per-sub-task data populated when the role is mid-sub-task (executor,
+  // reviewer, critic). Null for the planner.
+  subtask: SubTask | null;
+  // Reviewer/critic also receive the executor's handoff to review.
+  execution_handoff?: ExecutionHandoff;
+  // Adapter used for all role calls. Coordinator owns the choice.
+  adapter: AgentAdapter;
+  // System prompt assembled by the prompt-overlay layer.
+  system: string;
+  io: RunnerIO;
+  signal?: AbortSignal;
+  // Optional: tools + executors + sandbox. Only populated for roles that
+  // need them (executor, reviewer when allow_read_file is true).
+  toolDefinitions?: ToolDefinition[];
+  toolExecutors?: Map<string, import("./tools/types.js").ToolExecutor>;
+  sandbox?: import("./sandbox/types.js").SandboxContext;
+  // Approval bookkeeping shared across roles within one coordinator run.
+  sessionApproved?: string[];
+}
+
+// What a role returns to the coordinator. Different role types fill in
+// different optional fields.
+export interface RoleResult {
+  role: RoleId;
+  // The role's final assistant turn (raw text).
+  text: string;
+  // Updated history including the role's own turns.
+  history: Message[];
+  // One of these will be populated based on the role type.
+  plan?: PlanHandoff;
+  execution?: ExecutionHandoff;
+  review?: ReviewHandoff;
+  escalation?: EscalationHandoff;
+  // True when the role declared a blocker.
+  blocked?: boolean;
+  blocker_reason?: string;
+  // Cost contribution for this role invocation.
+  cost?: RoleCost;
+}
+
+export interface RoleCost {
+  tokens_used: number;
+  tool_calls: number;
+  wall_clock_ms: number;
+}
+
+// ---------- Coordinator state ----------
+
+export type CoordinatorState =
+  | "init"
+  | "plan"
+  | "dispatch"
+  | "execute"
+  | "review_step"
+  | "next_subtask"
+  | "retry"
+  | "block"
+  | "escalate"
+  | "complete";
+
+export interface SubTask {
+  id: string;
+  // Human-readable title, used in banners and operator prompts.
+  title: string;
+  // Free-form instruction to the executor. The coordinator wraps this in a
+  // sub-brief shape before dispatch.
+  instruction: string;
+  // Quality bar the reviewer evaluates against. Sourced from the planner.
+  acceptance_criteria: string[];
+  // Linear ordering. v0.4 supports sequential only; non-linear plans get
+  // rejected by the plan parser.
+  order: number;
+  // Optional explicit dependencies on prior sub-task ids. v0.4 only allows
+  // dependencies on the immediately preceding sub-task (or none).
+  depends_on?: string[];
+}
+
+export type SubTaskStatus =
+  | "pending"
+  | "executing"
+  | "reviewing"
+  | "passed"
+  | "failed"
+  | "retrying"
+  | "escalated"
+  | "skipped";
+
+export interface SubTaskState {
+  id: string;
+  status: SubTaskStatus;
+  attempts: number;
+  last_handoff?: ExecutionHandoff;
+  last_review?: ReviewHandoff;
+  // Set when status becomes "escalated".
+  escalation?: EscalationHandoff;
+  started_at?: string;
+  finished_at?: string;
+}
+
+// Coordinator-emitted event for UI/logging. Pure data; no IO.
+export type CoordinatorEvent =
+  | { type: "state_enter"; state: CoordinatorState; at: string; subtask_id?: string }
+  | { type: "role_invoked"; role: RoleId; subtask_id?: string; at: string }
+  | { type: "subtask_result"; subtask_id: string; status: SubTaskStatus; at: string }
+  | { type: "budget_warn"; metric: "tokens" | "wall_clock_ms" | "tool_calls"; used: number; limit: number }
+  | { type: "budget_halt"; metric: "tokens" | "wall_clock_ms" | "tool_calls"; used: number; limit: number; at: string }
+  | { type: "escalated"; subtask_id: string; reason: string; at: string };
+
+// ---------- Plan ----------
+
+// The plan as the coordinator persists it. The planner produces a `PlanHandoff`
+// which contains exactly this plus a rationale string.
+export interface PlanNode {
+  subtasks: SubTask[];
+  created_at: string;
+  // Planner's text rationale for the decomposition. Surfaced in `openwar plan`.
+  rationale: string;
+}
+
+// ---------- Handoffs ----------
+
+// Every cross-role communication uses one of these typed shapes. Roles emit
+// them inside a fenced JSON block; the coordinator parses, validates with the
+// schema in src/orchestration/handoff.ts, and rejects on malformed.
+
+export interface PlanHandoff {
+  kind: "plan";
+  subtasks: SubTask[];
+  rationale: string;
+}
+
+export interface ExecutionHandoff {
+  kind: "execution";
+  subtask_id: string;
+  // What the executor produced. Free-form text the reviewer evaluates.
+  output: string;
+  // Records of every tool call made during execution. Used by the reviewer
+  // to verify claims.
+  tool_calls: ToolCallRecord[];
+  // Executor's own narrative about what it did. Separate from `output`.
+  notes: string;
+}
+
+export interface ReviewHandoff {
+  kind: "review";
+  subtask_id: string;
+  verdict: "pass" | "fail" | "needs_retry";
+  rationale: string;
+  // Reviewer's suggested edit, used only when verdict === "needs_retry".
+  suggested_revision?: string;
+}
+
+export interface EscalationHandoff {
+  kind: "escalation";
+  severity: "info" | "warn" | "error";
+  role: RoleId;
+  reason: string;
+  // Free-form context the operator may need to make the call.
+  context: string;
+  // When escalation came from a budget overrun, this names the metric.
+  budget_metric?: "tokens" | "wall_clock_ms" | "tool_calls";
+}
+
+// ---------- Budgets ----------
+
+export interface Budgets {
+  max_tokens: number;
+  max_wall_clock_minutes: number;
+  max_tool_calls_per_subtask: number;
+  max_retries_per_subtask: number;
+}
+
+export const DEFAULT_BUDGETS: Budgets = {
+  max_tokens: 50_000,
+  max_wall_clock_minutes: 20,
+  max_tool_calls_per_subtask: 15,
+  max_retries_per_subtask: 3,
+};
+
+// ---------- Cost tracker ----------
+
+export interface CostUsage {
+  tokens_used: number;
+  wall_clock_ms: number;
+  tool_calls: number;
+  // Per-sub-task tool-call count, indexed by subtask_id.
+  tool_calls_by_subtask: Record<string, number>;
+  started_at: string;
+}
+
+// ---------- Coordinator session extensions (schema v3) ----------
+
+// Per-role conversation history. Each role keeps its own thread; the
+// coordinator merges into the session's primary transcript for inspection,
+// but role dispatch always uses the role-local history.
+export type RoleTranscripts = Record<RoleId, Message[]>;
+
+// New SessionMeta fields layered on for schema v3. Optional everywhere for
+// back-compat: a v2 session loads as v3 with these missing/empty.
+export interface SessionMetaV3 extends SessionMeta {
+  coordinator_state?: CoordinatorState;
+  // The planner output the coordinator is executing against.
+  plan?: PlanNode | null;
+  // Per-sub-task state. Keyed by SubTask.id.
+  subtask_states?: Record<string, SubTaskState>;
+  // Per-role conversation histories.
+  role_transcripts?: RoleTranscripts;
+  // Cost ledger.
+  cost?: CostUsage;
+  // Active roles for the run. Empty = single-agent mode.
+  active_roles?: RoleId[];
+  // Budgets resolved at run start (defaults + brief overrides).
+  budgets?: Budgets;
+  // Coordinator-emitted events. Append-only.
+  coordinator_events?: CoordinatorEvent[];
 }

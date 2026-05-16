@@ -13,6 +13,28 @@ authorized_costs:
   # - mcp_tool:filesystem
 # mcp_servers:
 #   - filesystem=npx -y @modelcontextprotocol/server-filesystem /allowed/dir
+#
+# v0.4 multi-agent. Omit to run single-agent (v0.3 behavior). Empty list
+# (roles: []) is the same as omitting it. With multi-agent, the planner
+# decomposes the brief, the executor runs each sub-task, and the reviewer
+# evaluates against the acceptance criteria. Add "critic" for parallel
+# second-opinion review (a disagreement halts the coordinator).
+# roles:
+#   - planner
+#   - executor
+#   - reviewer
+#   # - critic
+#
+# Optional cost ceilings. Falls back to defaults if omitted:
+#   max_tokens: 50000
+#   max_wall_clock_minutes: 20
+#   max_tool_calls_per_subtask: 15
+#   max_retries_per_subtask: 3
+# budgets:
+#   max_tokens: 100000
+#   max_wall_clock_minutes: 30
+#   max_tool_calls_per_subtask: 20
+#   max_retries_per_subtask: 3
 ---
 
 # Objective

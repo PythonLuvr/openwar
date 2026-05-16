@@ -63,3 +63,35 @@ export function checkAuthorization(input: AuthCheckInput): AuthDecision {
     missing_categories: missing,
   };
 }
+
+// v0.4. Combined check that layers per-role scope on top of brief-level
+// authorization. Returns a discriminated result so callers can distinguish
+// a role-scope violation (programming error, halts coordinator) from a
+// brief-auth gap (Phase 3 operator prompt).
+import type { RoleDefinition } from "../types.js";
+import { checkRoleScope } from "./role-scope.js";
+
+export interface RoleAwareAuthInput extends AuthCheckInput {
+  role: RoleDefinition;
+}
+
+export type RoleAwareAuthResult =
+  | { kind: "allowed"; decision: AuthDecision }
+  | { kind: "role_scope_violation"; missing_categories: string[]; role_id: string; tool_name: string }
+  | { kind: "needs_operator"; decision: AuthDecision };
+
+export function checkAuthorizationWithRole(input: RoleAwareAuthInput): RoleAwareAuthResult {
+  const scope = checkRoleScope({ tool: input.tool, role: input.role });
+  if (!scope.in_scope) {
+    return {
+      kind: "role_scope_violation",
+      missing_categories: scope.missing_categories,
+      role_id: input.role.id,
+      tool_name: input.tool.name,
+    };
+  }
+  const decision = checkAuthorization(input);
+  return decision.allowed
+    ? { kind: "allowed", decision }
+    : { kind: "needs_operator", decision };
+}

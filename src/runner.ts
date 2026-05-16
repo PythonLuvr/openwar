@@ -212,7 +212,85 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     for (const c of mcpClients) await c.disconnect().catch(() => {});
   };
 
-  // ------------------- Phase 1 -------------------
+  // ------------------- v0.4 multi-agent branch -------------------
+  // When the brief opts into multi-agent (roles: [planner, executor, reviewer, ...]),
+  // the coordinator drives the rest of the run. Single-agent mode (roles
+  // unset or roles: []) falls through to the v0.3 phase loop below.
+  const roleIds = (opts.runtimeRoles ?? brief.frontmatter.roles ?? []).filter(
+    (r): r is string => typeof r === "string" && r.length > 0,
+  );
+  if (roleIds.length > 0) {
+    const { runCoordinator, resolveBudgets } = await import("./coordinator/index.js");
+    const budgets = { ...resolveBudgets(brief), ...(opts.runtimeBudgets ?? {}) };
+    transition("execute", "intake accepted (multi-agent)");
+    persist();
+    const coordResult = await runCoordinator({
+      brief,
+      framework: system,
+      adapter,
+      io,
+      roleIds,
+      budgets,
+      toolDefinitions,
+      toolExecutors,
+      sandbox,
+      sessionApproved: session.meta.session_approved_categories ?? [],
+      sessionId: session.meta.brief_id,
+      onSnapshot: (snap, events) => {
+        // Project coordinator snapshot into SessionMeta (schema v3 fields).
+        const metaV3 = session.meta as typeof session.meta & {
+          coordinator_state?: typeof snap.state;
+          plan?: typeof snap.plan;
+          subtask_states?: typeof snap.subtask_states;
+          active_roles?: string[];
+          budgets?: typeof snap.budgets;
+          coordinator_events?: typeof events;
+          cost?: { tokens_used: number; wall_clock_ms: number; tool_calls: number; tool_calls_by_subtask: Record<string, number>; started_at: string };
+        };
+        metaV3.coordinator_state = snap.state;
+        metaV3.plan = snap.plan;
+        metaV3.subtask_states = snap.subtask_states;
+        metaV3.active_roles = snap.active_roles;
+        metaV3.budgets = snap.budgets;
+        metaV3.coordinator_events = events;
+        if (!metaV3.cost) metaV3.cost = { tokens_used: 0, wall_clock_ms: 0, tool_calls: 0, tool_calls_by_subtask: {}, started_at: new Date().toISOString() };
+        metaV3.cost.tokens_used = snap.cost.tokens_used;
+        metaV3.cost.wall_clock_ms = snap.cost.wall_clock_ms;
+        metaV3.cost.tool_calls_by_subtask = { ...snap.cost.tool_calls_by_subtask };
+        persist();
+      },
+      onMessage: (m) => {
+        recordMessage(m);
+      },
+      onApproval: (a) => {
+        session.meta.destructive_approvals.push({
+          at: new Date().toISOString(),
+          action: a.action,
+          approved: a.approved,
+          ...(a.session_categories ? { session_categories: a.session_categories } : {}),
+        });
+        if (a.approved && a.session_categories) {
+          const existing = session.meta.session_approved_categories ?? [];
+          for (const c of a.session_categories) if (!existing.includes(c)) existing.push(c);
+          session.meta.session_approved_categories = existing;
+        }
+        persist();
+      },
+    });
+    transition(coordResult.completed ? "done" : "blocker", `coordinator final_state=${coordResult.final_state}`);
+    persist();
+    await cleanupMcp();
+    return {
+      session_id: session.meta.brief_id,
+      final_phase: coordResult.final_phase,
+      completed: coordResult.completed,
+      halted: coordResult.halted,
+      ...(coordResult.halt_reason ? { halt_reason: coordResult.halt_reason } : {}),
+      messages: session.messages,
+    };
+  }
+
+  // ------------------- Phase 1 (single-agent, v0.3) -------------------
   transition("execute", "intake accepted");
   persist();
   let executeResult = await runExecute({

@@ -1,0 +1,13 @@
+export * from "./types.js";
+export { step, applyMutations } from "./state-machine.js";
+export type { MachineSnapshot, SnapshotMutation, StepSignal, StepResult } from "./state-machine.js";
+export { runCoordinator, resolveBudgets, newSubtaskState } from "./driver.js";
+export type { RunCoordinatorOptions, CoordinatorRunResult } from "./driver.js";
+export { newCostUsage, estimateTokens, addTokens, recordToolCall, checkBudgets } from "./cost-tracker.js";
+export type { BudgetMetric, BudgetCheck } from "./cost-tracker.js";
+export { defaultRetryPolicy } from "./retry-policy.js";
+export type { RetryPolicy } from "./retry-policy.js";
+export { parsePlanFromText, scopeWarningsForPlan } from "./plan-parser.js";
+export type { ParsePlanResult } from "./plan-parser.js";
+export { aggregateResults } from "./result-aggregator.js";
+export type { AggregatedResult, SubtaskOutcome } from "./result-aggregator.js";

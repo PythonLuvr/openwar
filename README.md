@@ -126,16 +126,59 @@ Test a server before relying on it:
 openwar mcp test filesystem
 ```
 
+## Multi-agent orchestration (new in v0.4)
+
+When a brief opts into multi-agent by setting `roles:` in its frontmatter, the runtime stops running one agent against the whole brief and instead drives a small team:
+
+- **planner** decomposes the brief into linear sub-tasks with acceptance criteria.
+- **executor** runs each sub-task with the full v0.3 tool layer, gated by the brief's `authorized_costs`.
+- **reviewer** evaluates the executor's output against the sub-task's acceptance criteria. Read-only file access for verification.
+- **critic** (optional fourth role) gives an independent second-opinion review. Disagreement with the reviewer halts the run for an operator decision.
+
+The framework applies recursively. Every role's output passes through the same detectors as a single-agent run. Every sub-task gets its own Phase 0. Phase 2 / Phase 3 fire inside the role that triggered them.
+
+Try it without spending execution tokens first:
+
+```bash
+openwar plan examples/multi-agent-brief.md --adapter anthropic
+```
+
+Full run:
+
+```bash
+openwar run examples/multi-agent-brief.md --adapter anthropic
+```
+
+Single-agent mode (omitting `roles:` or passing `--single`) keeps the v0.3 behavior. Sessions from v0.3 resume cleanly under v0.4; the schema migration is automatic.
+
+### Budgets
+
+Briefs may declare cost ceilings in `budgets:`. Hitting any ceiling halts the coordinator cleanly with state persisted; the operator can extend and resume.
+
+```yaml
+budgets:
+  max_tokens: 80000
+  max_wall_clock_minutes: 25
+  max_tool_calls_per_subtask: 12
+  max_retries_per_subtask: 3
+```
+
+Defaults if omitted: 50k tokens, 20 minutes, 15 tool calls per sub-task, 3 retries per sub-task.
+
 ## CLI
 
 ```text
 openwar run <brief.md> [--adapter <id>] [--model <name>] [--mode gated|auto]
                        [--workdir <path>] [--no-shell]
                        [--mcp-server name=command] [--resume] [--ephemeral]
-openwar resume <brief_id>
+                       [--roles planner,executor,reviewer[,critic]]
+                       [--max-tokens N] [--max-minutes N] [--single]
+openwar plan <brief.md>                     # planner dry-run; no execution
+openwar resume <brief_id>                   # auto-detects single-agent vs multi-agent
 openwar list
 openwar inspect <brief_id> [--transcript]
 openwar validate <brief.md>
+openwar roles                                # list registered roles
 openwar adapters
 openwar tools
 openwar mcp list | add <name> <cmd...> | remove <name> | test <name>
@@ -224,13 +267,14 @@ System prompts cost nothing to install and work with any runtime. The runtime is
 
 ## Versioning
 
-Current: **v0.3.0**.
+Current: **v0.4.0**.
 
 - v0.1: framework doc only (single markdown file).
 - v0.2: runtime, CLI, BYOK adapters for Anthropic, OpenAI, Gemini, Grok, OpenAI-compat.
-- v0.3: six native tools (read_file, write_file, list_dir, shell_exec, http_fetch, apply_patch), hand-rolled MCP client, per-adapter tool-call translation, Phase 3 destructive flag for unauthorized tool calls. 191 tests passing on Ubuntu / macOS / Windows × Node 20 / 22.
-- v0.4: CLI-bridge adapters (claude-cli, codex-cli, gemini-cli).
-- v0.5: multi-agent / boardroom orchestration.
+- v0.3: six native tools (read_file, write_file, list_dir, shell_exec, http_fetch, apply_patch), hand-rolled MCP client, per-adapter tool-call translation, Phase 3 destructive flag for unauthorized tool calls.
+- v0.4: multi-agent orchestration. Coordinator FSM, planner / executor / reviewer / critic roles, typed handoffs, per-role tool scoping, budgets, schema v3 with v2 migration, `openwar plan` and `openwar roles` subcommands.
+- v0.5: persistent project memory across briefs.
+- v0.6: observability dashboards / tracing UI.
 
 Framework doc is versioned with the package. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format.
 
