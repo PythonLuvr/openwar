@@ -1,25 +1,39 @@
 <p align="center">
-  <img src="openwar-logo.png" alt="OpenWar" width="160" height="160" />
+  <img src="branding/warbit-hero.png" alt="WarBit, the OpenWar mascot" width="260" />
 </p>
 
 <h1 align="center">OpenWar</h1>
 
 <p align="center"><strong>A framework and a runtime for agent behavior that doesn't go off the rails.</strong></p>
 
-OpenWar replaces eager-customer-service-rep defaults with the behavior of a senior peer. It confirms briefs before acting, breaks work into phases, asks before doing anything destructive, and writes like an adult who's busy.
-
 <p align="center">
-  <img src="branding/warbit-story/warbit-02-daily-intel.png" alt="WarBit asking what you're shipping today" width="280" />
-  <br />
-  <em>Phase 0 in one image. The agent asks before it acts.</em>
+  <a href="https://github.com/pythonluvr/openwar/releases"><img src="https://img.shields.io/github/v/release/pythonluvr/openwar?display_name=tag&sort=semver" alt="Latest release"></a>
+  <a href="https://github.com/pythonluvr/openwar/actions"><img src="https://img.shields.io/github/actions/workflow/status/pythonluvr/openwar/test.yml?branch=main" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-You can use it two ways:
+OpenWar replaces eager-customer-service-rep defaults with the behavior of a senior peer. It confirms briefs before acting, breaks work into phases, asks before doing anything destructive, and writes like an adult who's busy.
 
-1. **As a runtime** (new in v0.2). Install the package, point it at a brief, watch the phase machine enforce the framework against any BYOK LLM. The runtime is opinionated: no flag to disable Phase 3, no way to skip the Confirmation Summary.
+This is WarBit. He runs OpenWar. He does not "happily help you with that."
+
+<p align="center">
+  <img src="branding/warbit-story/warbit-04-chaos.png" alt="WarBit buried in TODOs and merge conflicts" width="280" />
+  <br />
+  <em>Default agent behavior. Sycophantic, eager, drowning in half-finished context.</em>
+</p>
+
+You can use OpenWar two ways:
+
+1. **As a runtime** (new in v0.2, expanded in v0.3 with tool calling). Install the package, point it at a brief, watch the phase machine enforce the framework against any BYOK LLM. The runtime is opinionated: no flag to disable Phase 3, no way to skip the Confirmation Summary.
 2. **As a system prompt** (v0.1, still supported). Paste [`openwar.md`](./openwar.md) into Claude Code's CLAUDE.md, Cursor's rules, Hermes, OpenClaw, or anywhere else. The agent's behavior changes; nothing else does.
 
 The framework doc and the runtime are the same source of truth. The doc tells the model what to do. The runtime makes sure it actually does it.
+
+<p align="center">
+  <img src="branding/warbit-story/warbit-02-daily-intel.png" alt="WarBit at a 'Daily Intel' bulletin board" width="280" />
+  <br />
+  <em>Phase 0 in one image. What are you shipping today, ops?</em>
+</p>
 
 ## Quick start (runtime)
 
@@ -49,6 +63,12 @@ Provide an API key for whichever adapter you pick:
 
 ## What the runtime enforces
 
+<p align="center">
+  <img src="branding/warbit-story/warbit-05-cockpit.png" alt="WarBit watching a wall of monitors" width="280" />
+  <br />
+  <em>Every turn passes through deterministic detectors. No second LLM, no judging.</em>
+</p>
+
 | Phase   | What happens                                                                                     | What blocks |
 |---------|--------------------------------------------------------------------------------------------------|-------------|
 | Phase 0 | Agent must produce a Confirmation Summary with Objective / Deliverables / Constraints / Tools / Unknowns. | No execution until the operator accepts. |
@@ -57,9 +77,15 @@ Provide an API key for whichever adapter you pick:
 | Phase 3 | If the agent announces intent to do something destructive or out-of-directive, the runtime stops and asks for explicit yes. | Authorization can be pre-approved per category in the brief's `authorized_costs`. |
 | Phase 4 | Agent produces a concise completion report. | None. |
 
-The phase loop is enforced by deterministic pattern detectors. No second LLM, no judging. If the agent skips the Confirmation Summary, the runtime asks it to restate before letting execution start.
+If the agent skips the Confirmation Summary, the runtime asks it to restate before letting execution start.
 
 ## Tools (new in v0.3)
+
+<p align="center">
+  <img src="branding/warbit-story/warbit-06-new-tools.png" alt="WarBit opening a glowing 'New Tools' chest" width="280" />
+  <br />
+  <em>v0.3 turned OpenWar from "constrained chat wrapper" into "real agent." The runtime now calls tools.</em>
+</p>
 
 The runtime ships six native tools plus a hand-rolled MCP client. Every tool call goes through:
 
@@ -144,7 +170,7 @@ brief_id: YYYY-MM-DD-NNN           # optional; auto-generated if absent
 deadline: YYYY-MM-DD               # optional
 scope_locked: true|false           # if true, refuse out-of-scope additions
 mode: gated|auto                   # optional override of per-step-vs-auto
-workdir: ./relative-or-absolute   # optional. All filesystem tools sandboxed here.
+workdir: ./relative-or-absolute    # optional. All filesystem tools sandboxed here.
 authorized_costs:                  # pre-approves these destructive categories
   - filesystem_write
   - shell_exec
@@ -182,7 +208,7 @@ Settings → Rules for AI → paste the contents of `openwar.md`.
 
 ### War Room
 
-War Room ships OpenWar as its default framework. v0.5+ adopts the runtime; earlier versions used the system prompt only.
+War Room ships OpenWar as its default framework. v0.7+ adopts the runtime; earlier versions used the system prompt only.
 
 ## Why both
 
@@ -190,22 +216,34 @@ Behavioral overlays are easy to ignore. A model that's been told "always produce
 
 System prompts cost nothing to install and work with any runtime. The runtime is heavier, but it actually enforces the rules.
 
+<p align="center">
+  <img src="branding/warbit-story/warbit-03-success.png" alt="WarBit celebrating in front of a 'SUCCESS' screen" width="280" />
+  <br />
+  <em>Phase 4 completion. WarBit ships.</em>
+</p>
+
 ## Versioning
 
-Current: **v0.2.0** (runtime + framework doc).
+Current: **v0.3.0**.
 
-- v0.2: runtime, CLI, BYOK adapters for Anthropic / OpenAI / Gemini / Grok / OpenAI-compat.
-- v0.3: CLI-bridge adapters (claude-cli, codex-cli), MCP tool calling.
-- v0.4: multi-agent / boardroom orchestration.
+- v0.1: framework doc only (single markdown file).
+- v0.2: runtime, CLI, BYOK adapters for Anthropic, OpenAI, Gemini, Grok, OpenAI-compat.
+- v0.3: six native tools (read_file, write_file, list_dir, shell_exec, http_fetch, apply_patch), hand-rolled MCP client, per-adapter tool-call translation, Phase 3 destructive flag for unauthorized tool calls. 191 tests passing on Ubuntu / macOS / Windows × Node 20 / 22.
+- v0.4: CLI-bridge adapters (claude-cli, codex-cli, gemini-cli).
+- v0.5: multi-agent / boardroom orchestration.
 
 Framework doc is versioned with the package. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format.
 
 ## License
 
-[MIT](./LICENSE).
+[MIT](./LICENSE). Use it, modify it, fork it, ship your own variants, paste it into commercial products. No obligations beyond keeping the copyright notice.
 
 ## Authorship
 
 OpenWar is the framework that ships inside [War Room](https://github.com/pythonluvr/war-room), authored across many iterations of running real agent work. This standalone repo exists so people who don't use War Room can still adopt the framework.
 
-Issues and PRs welcome.
+<p align="center">
+  <img src="branding/warbit-story/warbit-01-sunset.png" alt="WarBit sitting in front of a sunset over the city" width="280" />
+  <br />
+  <em>Issues and PRs welcome. WarBit will read them in the morning.</em>
+</p>
