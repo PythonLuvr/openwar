@@ -8,6 +8,12 @@
 
 OpenWar replaces eager-customer-service-rep defaults with the behavior of a senior peer. It confirms briefs before acting, breaks work into phases, asks before doing anything destructive, and writes like an adult who's busy.
 
+<p align="center">
+  <img src="branding/warbit-story/warbit-02-daily-intel.png" alt="WarBit asking what you're shipping today" width="280" />
+  <br />
+  <em>Phase 0 in one image. The agent asks before it acts.</em>
+</p>
+
 You can use it two ways:
 
 1. **As a runtime** (new in v0.2). Install the package, point it at a brief, watch the phase machine enforce the framework against any BYOK LLM. The runtime is opinionated: no flag to disable Phase 3, no way to skip the Confirmation Summary.
