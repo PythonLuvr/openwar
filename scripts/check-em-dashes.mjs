@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = process.cwd();
 const TARGETS = [".md", ".ts", ".mts", ".cts", ".mjs"];
 const SKIP = new Set(["node_modules", "dist", ".git", ".openwar", "coverage"]);
-// fileURLToPath handles both Windows (file:///C:/...) and unix (file:///home/...)
-// URL shapes correctly; the prior manual leading-slash strip was Windows-only.
+// fileURLToPath handles both Windows and POSIX URL shapes correctly;
+// the prior manual leading-slash strip happened to pass on Windows only.
 const SELF = relative(ROOT, fileURLToPath(import.meta.url));
 
 const offenders = [];
