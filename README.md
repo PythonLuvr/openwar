@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="branding/warbit-hero.png" alt="WarBit, the OpenWar mascot" width="260" />
+  <img src="openwar-logo.png" alt="OpenWar" width="160" height="160" />
 </p>
 
 <h1 align="center">OpenWar</h1>
