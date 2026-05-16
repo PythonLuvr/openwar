@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/pythonluvr/openwar/releases"><img src="https://img.shields.io/github/v/release/pythonluvr/openwar?display_name=tag&sort=semver" alt="Latest release"></a>
   <a href="https://github.com/pythonluvr/openwar/actions"><img src="https://img.shields.io/github/actions/workflow/status/pythonluvr/openwar/test.yml?branch=main" alt="Tests"></a>
+  <a href="https://www.npmjs.com/package/@pythonluvr/openwar"><img src="https://img.shields.io/npm/v/@pythonluvr/openwar.svg" alt="npm"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
@@ -292,7 +293,7 @@ System prompts cost nothing to install and work with any runtime. The runtime is
 
 ## Versioning
 
-Current: **v0.4.0**.
+Current: **v0.4.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
 - v0.1: framework doc only (single markdown file).
 - v0.2: runtime, CLI, BYOK adapters for Anthropic, OpenAI, Gemini, Grok, OpenAI-compat.
