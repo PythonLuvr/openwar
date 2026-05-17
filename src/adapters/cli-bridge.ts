@@ -138,11 +138,18 @@ export class CliBridgeAdapter implements AgentAdapter {
     const argv = [...this.options.args];
     const env = { ...process.env, ...(this.options.env ?? {}) };
 
+    // v0.6.1: Windows needs `shell: true` to spawn .cmd / .bat shims (every
+    // npm-installed CLI lands as a .cmd on Windows). Unconditionally setting
+    // shell: true breaks any binary whose path contains a space (the shell
+    // re-parses argv and mishandles quoting), so this is scoped to the
+    // extensions that actually need it. POSIX runs keep shell: false.
+    const needsShell =
+      process.platform === "win32" && /\.(cmd|bat)$/i.test(this.options.binary);
     const child = spawn(this.options.binary, argv, {
       cwd: this.options.working_dir,
       env: env as NodeJS.ProcessEnv,
       stdio: ["pipe", "pipe", "pipe"],
-      shell: false,
+      shell: needsShell,
       windowsHide: true,
     });
 

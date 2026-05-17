@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.1
+
+Windows-only bug fix for cli-bridge. v0.5 and v0.6 hardcoded `shell: false` in the `child_process.spawn` call. Node's documentation calls out that `.cmd` and `.bat` files cannot be spawned without a shell on Windows, so every operator trying to bridge to an npm-installed CLI (Claude Code, Gemini CLI, aider, etc) hit `spawn <binary> ENOENT` even when the file existed on PATH. POSIX runs were unaffected because Unix binaries spawn fine without a shell.
+
+### Fixed
+
+- **`src/adapters/cli-bridge.ts`**: spawn now passes `shell: true` only when running on Windows AND the binary ends in `.cmd` or `.bat`. POSIX runs keep `shell: false` unchanged. Windows runs against a non-shim binary (e.g. `node.exe`) also keep `shell: false`, which matters because unconditionally enabling shell on Windows re-parses argv through `cmd.exe` and mangles any binary path containing a space (the `C:\Program Files\nodejs\node.exe` case). The narrower predicate fixes the original `.cmd` ENOENT bug without introducing a second class of quoting regressions.
+
+### Added
+
+- **`tests/adapters/cli-bridge-windows-cmd.test.ts`**: regression test that spawns a `.cmd` script via the adapter and asserts no spawn error. Skips cleanly on non-Windows so the test matrix on Ubuntu and macOS stays green.
+- **`tests/fixtures/mock-cli/hello.cmd`**: minimal `.cmd` shim used by the regression test. Echoes a known string and exits 0.
+
+### Known follow-ups (not in 0.6.1)
+
+- **Native tool visibility through cli-bridge.** When the bridged CLI delegates execution, the CLI does not see OpenWar's native tools (`read_project_memory`, `write_project_memory`, the six filesystem/shell/http tools, MCP tools). This is by design per the v0.5 explicit non-goal ("No native tool-call translation"), but a brief that asks the bridged agent to use a native tool currently hits a Phase 2 blocker without context. Two paths under consideration:
+  - Brief-validator warning when an adapter is cli-bridge AND the brief body references native tool names.
+  - MCP-server-mode (already in the v0.5.2+ roadmap): OpenWar exposes its native tools via an MCP server and the bridged CLI calls them back through MCP. Real engineering, not a patch.
+  
+  Both deferred from 0.6.1; surfaced here so the architectural decision is on the record.
+
 ## 0.6.0
 
 Persistent project memory. v0.5.x runs were stateless: every brief started from a cold slate and the operator had to manually paste prior context, decisions, and conventions into each new brief. v0.6 introduces a per-project memory store that agents can read and write across briefs, plus a `openwar memory` subcommand for the operator to inspect and prune outside a session.
