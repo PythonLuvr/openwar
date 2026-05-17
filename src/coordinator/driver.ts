@@ -64,7 +64,14 @@ import { checkAuthorizationWithRole } from "../auth/check.js";
 export interface RunCoordinatorOptions {
   brief: Brief;
   framework: string;
-  adapter: AgentAdapter;
+  // v0.5.1: per-role adapter resolution. The runner builds adapters from the
+  // brief's role_adapters map (or falls back to the runtime default) and hands
+  // a resolver in. Lazy resolution matters because cli-bridge spawns a child
+  // on first send, so roles the run never reaches stay un-spawned.
+  // Back-compat: callers may pass `adapter` instead, in which case every role
+  // resolves to the same adapter.
+  getAdapter?: (roleId: RoleId) => AgentAdapter;
+  adapter?: AgentAdapter;
   io: RunnerIO;
   // Active roles (already validated; first element is the planner role).
   roleIds: RoleId[];
@@ -104,7 +111,12 @@ const MAX_PHASE_3_PROMPTS_PER_SUBTASK = 6;
 export async function runCoordinator(
   opts: RunCoordinatorOptions,
 ): Promise<CoordinatorRunResult> {
-  const { brief, framework, adapter, io, signal } = opts;
+  const { brief, framework, io, signal } = opts;
+  if (!opts.getAdapter && !opts.adapter) {
+    throw new Error("runCoordinator: must provide either getAdapter or adapter");
+  }
+  const resolveAdapter: (roleId: RoleId) => AgentAdapter =
+    opts.getAdapter ?? (() => opts.adapter!);
   const events: CoordinatorEvent[] = [];
   const sessionApproved = [...opts.sessionApproved];
   const startTime = Date.now();
@@ -213,7 +225,7 @@ export async function runCoordinator(
       const sig = await runPlanState({
         brief,
         framework,
-        adapter,
+        adapter: resolveAdapter("planner"),
         io,
         roleHistories,
         cost,
@@ -244,7 +256,7 @@ export async function runCoordinator(
       const sig = await runExecuteState({
         brief,
         framework,
-        adapter,
+        adapter: resolveAdapter("executor"),
         io,
         subtask: sub,
         priorReview: outcomes.get(sub.id)?.review,
@@ -290,7 +302,8 @@ export async function runCoordinator(
       const reviewSig = await runReviewState({
         brief,
         framework,
-        adapter,
+        reviewerAdapter: resolveAdapter("reviewer"),
+        criticAdapter: opts.roleIds.includes("critic") ? resolveAdapter("critic") : undefined,
         io,
         subtask: sub,
         executionHandoff: exec,
@@ -679,7 +692,8 @@ interface ReviewStateResult {
 async function runReviewState(args: {
   brief: Brief;
   framework: string;
-  adapter: AgentAdapter;
+  reviewerAdapter: AgentAdapter;
+  criticAdapter?: AgentAdapter;
   io: RunnerIO;
   subtask: SubTask;
   executionHandoff: ExecutionHandoff;
@@ -694,7 +708,7 @@ async function runReviewState(args: {
   if (!reviewer) {
     return { signal: { kind: "fatal", reason: "reviewer role missing" } };
   }
-  const reviewerResult = await invokeReviewer(reviewer, args);
+  const reviewerResult = await invokeReviewer(reviewer, { ...args, adapter: args.reviewerAdapter });
   if (!reviewerResult.review) {
     return { signal: { kind: "fatal", reason: "reviewer produced no valid handoff" } };
   }
@@ -708,7 +722,7 @@ async function runReviewState(args: {
     // No critic registered; fall back to reviewer alone.
     return { signal: verdictToSignal(reviewerResult.review.verdict), review: reviewerResult.review };
   }
-  const criticResult = await invokeReviewer(critic, args);
+  const criticResult = await invokeReviewer(critic, { ...args, adapter: args.criticAdapter ?? args.reviewerAdapter });
   if (!criticResult.review) {
     return { signal: verdictToSignal(reviewerResult.review.verdict), review: reviewerResult.review };
   }

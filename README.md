@@ -181,6 +181,25 @@ openwar run examples/multi-agent-brief.md --adapter anthropic
 
 Single-agent mode (omitting `roles:` or passing `--single`) keeps the v0.3 behavior. Sessions from v0.3 resume cleanly under v0.4; the schema migration is automatic.
 
+### Per-role adapter mixing (new in v0.5.1)
+
+A brief can pin each role to its own adapter. The canonical case: cheap API for planner + reviewer, local CLI for executor.
+
+```yaml
+roles:
+  planner:
+    adapter: anthropic
+    model: claude-haiku-4-5
+  executor:
+    adapter: cli-bridge
+    binary: claude
+  reviewer:
+    adapter: anthropic
+    model: claude-haiku-4-5
+```
+
+The flat-list shape (`roles: [planner, executor, reviewer]`) still works; the map shape opts into per-role overrides. Roles omitted from the map fall back to the run-wide `--adapter` default. See [`examples/per-role-adapters-brief.md`](./examples/per-role-adapters-brief.md) and the "Per-role adapter mixing" section of [`openwar.md`](./openwar.md).
+
 ### Budgets
 
 Briefs may declare cost ceilings in `budgets:`. Hitting any ceiling halts the coordinator cleanly with state persisted; the operator can extend and resume.
@@ -297,13 +316,14 @@ System prompts cost nothing to install and work with any runtime. The runtime is
 
 ## Versioning
 
-Current: **v0.5.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
+Current: **v0.5.1**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
 - v0.1: framework doc only (single markdown file).
 - v0.2: runtime, CLI, BYOK adapters for Anthropic, OpenAI, Gemini, Grok, OpenAI-compat.
 - v0.3: six native tools (read_file, write_file, list_dir, shell_exec, http_fetch, apply_patch), hand-rolled MCP client, per-adapter tool-call translation, Phase 3 destructive flag for unauthorized tool calls.
 - v0.4: multi-agent orchestration. Coordinator FSM, planner / executor / reviewer / critic roles, typed handoffs, per-role tool scoping, budgets, schema v3 with v2 migration, `openwar plan` and `openwar roles` subcommands.
 - v0.5: `cli-bridge` adapter. OpenWar coordinates CLI agents (Claude Code, Codex CLI, Gemini CLI, aider, etc) the same way it coordinates LLM adapters. The CLI is the executor; OpenWar is the phase machine wrapped around it. See the "Bridging to CLI agents" section in [`openwar.md`](./openwar.md).
+- v0.5.1: per-role adapter mixing. A brief can pin each role (planner / executor / reviewer / critic) to its own adapter and model. Canonical case: cheap API for planning and review, local CLI for executor. See [`examples/per-role-adapters-brief.md`](./examples/per-role-adapters-brief.md).
 - v0.6: persistent project memory across briefs.
 - v0.7: observability dashboards / tracing UI.
 

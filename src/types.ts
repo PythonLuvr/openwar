@@ -20,6 +20,11 @@ export interface BriefFrontmatter {
   mcp_servers?: { name: string; command: string; cwd?: string }[];
   // v0.4 additions. Optional; omitted = single-agent mode (v0.3 behavior).
   roles?: string[];
+  // v0.5.1: per-role adapter overrides. Populated when the brief uses the
+  // object form of `roles:`. Keys are role ids; values pin which adapter
+  // (and optional model + extras) that role uses. Roles absent from this
+  // map fall back to the runtime's default adapter passed to run().
+  role_adapters?: Record<string, RoleAdapterConfig>;
   budgets?: Partial<{
     max_tokens: number;
     max_wall_clock_minutes: number;
@@ -198,6 +203,18 @@ export interface AdapterConfig {
   baseUrl?: string;
   // Provider-specific overrides. Adapter is responsible for validating shape.
   extra?: Record<string, unknown>;
+}
+
+// v0.5.1: per-role adapter override carried in BriefFrontmatter.role_adapters.
+// `adapter` names a registered AdapterId. Any other keys are passed through to
+// AdapterConfig.extra at adapter construction (e.g. `binary` and `tier` for
+// cli-bridge, `base_url` for openai-compat). `model` is a first-class field.
+export interface RoleAdapterConfig {
+  adapter: string;
+  model?: string;
+  // Anything else (binary, tier, base_url, args, timeout_ms, ...) gets
+  // forwarded into AdapterConfig.extra at construction time.
+  [key: string]: unknown;
 }
 
 // ---------- Session state ----------

@@ -152,12 +152,15 @@ export class CliBridgeAdapter implements AgentAdapter {
     let spawnError: Error | null = null;
 
     // Watch for spawn errors (ENOENT, EACCES). These fire before any stdio
-    // event and need their own handler.
+    // event and need their own handler. v0.5.1 fix: also resolve on close so
+    // the await below cannot hang waiting for an error that never comes on a
+    // clean exit. The "error" handler still wins if it ever fires.
     const spawnErrorPromise = new Promise<void>((resolve) => {
       child.on("error", (err) => {
         spawnError = err;
         resolve();
       });
+      child.once("close", () => resolve());
     });
 
     // Hard timeout. SIGTERM first, escalate to SIGKILL after 5s grace.

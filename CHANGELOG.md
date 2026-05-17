@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.5.1
+
+Per-role adapter mixing. v0.4 introduced the planner / executor / reviewer / critic coordinator, but every role had to share the same adapter. v0.5.1 lets a brief pin each role to its own adapter (and optional model + extras), so a single run can keep planning and review on a cheap API while delegating execution to a local CLI agent. The coordinator threads the right adapter per role; the phase machine and detectors run uniformly against every role's output.
+
+### Added
+
+- **Brief frontmatter**: `roles:` now accepts a nested map in addition to the v0.4 flat list. Map keys become the roles list (in declaration order); values are `RoleAdapterConfig` objects with `adapter`, optional `model`, and any extra fields the adapter understands (e.g. `binary` and `tier` for cli-bridge). A sibling `role_adapters:` block is also accepted for callers that prefer to keep the flat list shape and layer adapter overrides separately. Briefs that ship the v0.4 flat list keep working unchanged; the runner falls back to the runtime's default adapter for every role.
+- **`RoleAdapterConfig` type** in `src/types.ts`. `BriefFrontmatter` gains an optional `role_adapters?: Record<string, RoleAdapterConfig>` field populated by the parser.
+- **YAML parser**: `parseFrontmatter` in `src/brief.ts` now handles two-level nested maps (previously capped at one level). Triple nesting stays out of scope; the parser is still hand-rolled and dependency-free.
+- **Validator** (`validateBrief`): every `role_adapters` entry is checked against the declared roles and the known adapter id set. Roles pinned to cli-bridge surface a clear error when the brief is missing `shell_exec` in `authorized_costs`, lifting the v0.5 runtime gate up to the validator so the failure shows in `openwar validate` instead of mid-run.
+- **Coordinator** (`runCoordinator`): the `RunCoordinatorOptions` surface gains `getAdapter: (roleId: RoleId) => AgentAdapter`. The driver resolves the executor's adapter, the planner's adapter, the reviewer's adapter, and (when enabled) the critic's adapter independently. Lazy resolution: cli-bridge instances don't spawn until the role that uses them fires, so roles the run never reaches stay un-spawned. The legacy single-`adapter` field is still accepted for back-compat and the tests that use it pass unchanged.
+- **Runner** (`src/runner.ts`): `buildRoleAdapterMap` constructs adapters from the brief's `role_adapters` map at run start; the cost-tier preview now lists each role's adapter and tier separately when overrides are present. Persists `role_adapter_ids` into `SessionMeta` so `inspect` and resume can rebuild the per-role adapter shape without re-reading the brief.
+- **Example**: `examples/per-role-adapters-brief.md` demonstrates the canonical mix (planner + reviewer on a cheap API, executor on cli-bridge).
+- **Tests**: new cases in `tests/brief.test.ts` covering the nested-map parser, the back-compat flat-list parser, and the validator's role-adapter checks. New cases in `tests/coordinator/per-role-adapters.test.ts` exercising the coordinator with two distinct mock adapters and asserting that each role's calls hit the right adapter.
+
+### Changed
+
+- `openwar.md` framework doc gains a "Per-role adapter mixing (v0.5.1+)" section under the multi-agent block. The v0.5 cli-bridge section's "Per-role adapter mixing" forward note is updated to describe the shipped syntax.
+- README adapter table notes the per-role override surface in the cli-bridge row.
+- The pre-Phase-0 cli-bridge `shell_exec` gate fires when any role uses cli-bridge, not just the top-level adapter. The halt reason is unchanged (`cli_bridge_requires_shell_exec`).
+
+### Fixed
+
+- **cli-bridge: clean exits no longer hang the adapter or the test runner.** v0.5.0's adapter awaited a `spawnErrorPromise` after the child closed; that promise was only resolved by the child's `error` event, which never fires on a successful run. The await blocked forever and took down the test runner with it (cancelling every cli-bridge test in CI on both Ubuntu and Windows on the v0.5.0 release). The promise now also resolves on the child's `close` event; errors that fire still win, so the surfaced behavior is unchanged.
+
+### Notes for forkers and War Room integrators
+
+- Zero new runtime dependencies. The brief parser extension is a pure addition to the existing hand-written YAML walker.
+- Back-compat is complete in both directions. v0.4-era flat `roles:` briefs run with the v0.5.1 runtime; v0.5.1 briefs with `role_adapters:` are rejected by the v0.4 validator (unknown field), which is the right failure mode.
+- No state-schema bump. `SessionMeta` gains an optional `role_adapter_ids` field; v3 sessions without it remain readable. v0.6 (persistent project memory) is the next schema-bump target.
+- The `--adapter` CLI flag remains the run-wide default and the fallback for roles without overrides. Per-role overrides live in the brief only; no `--role-adapter` flag in v0.5.1 (deferred to v0.5.2 if operator demand surfaces).
+
 ## 0.5.0
 
 cli-bridge adapter. OpenWar treats a CLI binary (Claude Code, Codex CLI, Gemini CLI, aider, your own custom tool) as an agent. The runtime delegates a brief by shelling out, captures stdout, and feeds it through the existing phase machine + detectors. Most multi-agent frameworks assume every agent is an API call; OpenWar is the first to coordinate across API agents and CLI agents in the same brief.

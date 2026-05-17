@@ -1,4 +1,4 @@
-# OpenWar v0.4: operating framework
+# OpenWar v0.5: operating framework
 
 You are an AI agent operating under the **OpenWar** framework. This document defines how you take work, execute it, communicate, and stop.
 
@@ -286,7 +286,7 @@ The CLI's *internal* authorization is its own business. Claude Code asks for its
 
 Under multi-agent orchestration (v0.4+), the cli-bridge can drive an entire run end to end. Every role (planner, executor, reviewer, optional critic) calls the same bridged CLI, and the coordinator applies the phase machine to each role's stdout independently. This is the v0.5 shape.
 
-Per-role adapter mixing (planner on a cheap API, executor on a local CLI, reviewer on yet another model) is the natural next step but requires a brief-schema change to support `roles: { executor: { adapter: cli-bridge, binary: claude }, ... }` per-role objects. That schema lands in v0.5.1; until then, pick one adapter for the whole brief.
+Per-role adapter mixing (planner on a cheap API, executor on a local CLI, reviewer on yet another model) shipped in v0.5.1. See the "Per-role adapter mixing" section below.
 
 ### What's NOT in v0.5
 
@@ -301,6 +301,55 @@ These are roadmap items, not omissions. The smaller surface area for v0.5 reduce
 
 ---
 
+## Per-role adapter mixing (v0.5.1+)
+
+v0.4 introduced the planner / executor / reviewer / critic coordinator, but every role had to share one adapter. v0.5.1 lets the brief pin each role to its own adapter. The canonical case: planner and reviewer on a cheap API model, executor delegated to a local CLI via cli-bridge. The phase machine and detectors run uniformly against every role's output regardless of which adapter produced it.
+
+### Brief shape
+
+Two shapes are accepted. v0.4 flat list still works:
+
+```yaml
+roles:
+  - planner
+  - executor
+  - reviewer
+```
+
+v0.5.1 nested map (per-role overrides):
+
+```yaml
+roles:
+  planner:
+    adapter: anthropic
+    model: claude-haiku-4-5
+  executor:
+    adapter: cli-bridge
+    binary: claude
+    tier: free
+  reviewer:
+    adapter: anthropic
+    model: claude-haiku-4-5
+```
+
+Any role omitted from the map (or any role declared in the flat list) falls back to the runtime's default adapter (the one passed via `--adapter` or the library `run({ adapter })` call). Authoring with the flat list and layering overrides separately is also supported through a sibling `role_adapters:` block.
+
+### Resolution
+
+The runner builds an `AgentAdapter` for each role with an override, attaches its resolved tier, and hands the coordinator a `getAdapter(roleId)` resolver. Lazy resolution: cli-bridge instances do not spawn until the role that uses them fires, so roles a run never reaches stay un-spawned. Construction failures (unknown adapter id, missing API key) throw before Phase 0 so the operator sees the problem before any agent call goes out.
+
+### Authorization
+
+Any role pinned to `cli-bridge` requires `shell_exec` in the brief's `authorized_costs`. The validator enforces this at brief-lint time so the failure shows in `openwar validate` instead of mid-run. The pre-Phase-0 halt fires for the same reason whenever the top-level adapter or any per-role adapter is cli-bridge.
+
+### What v0.5.1 does NOT add
+
+- **Per-role budgets.** Budgets stay run-wide; one token / wall-clock ledger across every role. Per-role budgets are a v0.6 discussion.
+- **Per-role sandboxes or MCP servers.** Each role shares the run's workdir, native tools, and MCP servers.
+- **CLI flag for per-role overrides.** No `--role-adapter` flag in v0.5.1; per-role overrides live in the brief only. The `--adapter` flag remains the run-wide default and the fallback for roles without overrides.
+
+---
+
 ## Versioning
 
-OpenWar is versioned. Current: v0.5 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter). Persistent project memory lands in v0.6, observability dashboards in v0.7. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.5.1 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing). Persistent project memory lands in v0.6, observability dashboards in v0.7. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.

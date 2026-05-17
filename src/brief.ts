@@ -150,6 +150,54 @@ export function validateBrief(brief: Brief, options: ValidateBriefOptions = {}):
     }
   }
 
+  // v0.5.1: role_adapters validation. Every key must reference a role in
+  // `roles`, every adapter id must be in the known set, and any role pinned to
+  // cli-bridge requires `shell_exec` in the brief's authorized_costs.
+  if (fm.role_adapters) {
+    const knownAdapterIds = new Set([
+      "anthropic",
+      "openai",
+      "gemini",
+      "grok",
+      "openai-compat",
+      "cli-bridge",
+      "mock",
+    ]);
+    const roleSet = new Set(fm.roles ?? []);
+    const hasShellExec =
+      fm.authorized_costs.includes("shell_exec") ||
+      fm.authorized_costs.includes("*");
+    for (const [roleId, cfg] of Object.entries(fm.role_adapters)) {
+      if (!roleSet.has(roleId)) {
+        issues.push({
+          field: `role_adapters.${roleId}`,
+          message: `references role "${roleId}" not declared in roles`,
+          severity: "error",
+        });
+      }
+      if (!cfg.adapter) {
+        issues.push({
+          field: `role_adapters.${roleId}.adapter`,
+          message: "required (e.g. anthropic, cli-bridge, openai-compat)",
+          severity: "error",
+        });
+      } else if (!knownAdapterIds.has(cfg.adapter)) {
+        issues.push({
+          field: `role_adapters.${roleId}.adapter`,
+          message: `unknown adapter "${cfg.adapter}". Known: ${[...knownAdapterIds].join(", ")}`,
+          severity: "error",
+        });
+      } else if (cfg.adapter === "cli-bridge" && !hasShellExec) {
+        issues.push({
+          field: `role_adapters.${roleId}.adapter`,
+          message:
+            'role uses cli-bridge but the brief is missing "shell_exec" in authorized_costs',
+          severity: "error",
+        });
+      }
+    }
+  }
+
   // v0.4: budgets validation. Non-positive values are errors.
   if (fm.budgets) {
     for (const [k, v] of Object.entries(fm.budgets)) {
@@ -181,6 +229,20 @@ export function renderBriefForAgent(brief: Brief): string {
   if (fm.mode) lines.push(`mode: ${fm.mode}`);
   if (fm.authorized_costs.length) {
     lines.push(`authorized_costs: ${fm.authorized_costs.join(", ")}`);
+  }
+  if (fm.roles && fm.roles.length > 0) {
+    lines.push(`roles: ${fm.roles.join(", ")}`);
+    if (fm.role_adapters) {
+      for (const [roleId, cfg] of Object.entries(fm.role_adapters)) {
+        const extras: string[] = [`adapter=${cfg.adapter || "(default)"}`];
+        if (cfg.model) extras.push(`model=${cfg.model}`);
+        for (const [k, v] of Object.entries(cfg)) {
+          if (k === "adapter" || k === "model") continue;
+          extras.push(`${k}=${String(v)}`);
+        }
+        lines.push(`  ${roleId}: ${extras.join(", ")}`);
+      }
+    }
   }
   lines.push("");
 
@@ -274,7 +336,10 @@ function parseFrontmatter(text: string): BriefFrontmatter {
       }
       const peek = lines[j] ?? "";
       const listLead = /^(\s+)-\s+(.+)$/.exec(peek);
-      const mapLead = /^(\s+)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(peek);
+      // v0.5.1: accept maps whose first child has an empty inline value
+      // (which means a nested-nested map follows). The (.*)$ rather than
+      // (.+)$ is the only change vs the v0.4 parser.
+      const mapLead = /^(\s+)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(peek);
 
       if (listLead) {
         const items: unknown[] = [];
@@ -306,7 +371,46 @@ function parseFrontmatter(text: string): BriefFrontmatter {
           if (sub[1]!.length < leadIndent) break;
           const subkey = sub[2]!;
           const subval = stripComment(sub[3] ?? "").trim();
-          if (subval === "") break; // nested-nested not supported here
+          if (subval === "") {
+            // v0.5.1: nested-nested map. The subkey has no inline value and
+            // the following lines are indented further than the parent. Treat
+            // them as a child map of scalars. Used by `role_adapters:` and the
+            // object form of `roles:`. Still only two levels deep; lists and
+            // triple-nested maps are out of scope for this parser.
+            let k = j + 1;
+            while (k < lines.length) {
+              const peekLn = lines[k] ?? "";
+              if (!peekLn.trim() || peekLn.trim().startsWith("#")) { k++; continue; }
+              break;
+            }
+            const childPeek = lines[k] ?? "";
+            const childMatch = /^(\s+)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(childPeek);
+            if (!childMatch || childMatch[1]!.length <= sub[1]!.length) {
+              // No child content (or not deeper). Record as empty object so the
+              // caller can detect "key declared but no children".
+              nested[subkey] = {};
+              j = k;
+              continue;
+            }
+            const childIndent = childMatch[1]!.length;
+            const childMap: Record<string, unknown> = {};
+            while (k < lines.length) {
+              const ln2 = lines[k] ?? "";
+              if (!ln2.trim()) { k++; continue; }
+              if (ln2.trim().startsWith("#")) { k++; continue; }
+              const cm = /^(\s+)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(ln2);
+              if (!cm) break;
+              if (cm[1]!.length < childIndent) break;
+              const ckey = cm[2]!;
+              const cval = stripComment(cm[3] ?? "").trim();
+              if (cval === "") break; // triple-nesting not supported
+              childMap[ckey] = coerceScalar(cval);
+              k++;
+            }
+            nested[subkey] = childMap;
+            j = k;
+            continue;
+          }
           nested[subkey] = coerceScalar(subval);
           j++;
         }
@@ -399,11 +503,39 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
   //     - planner
   //   roles: planner,executor,reviewer
   //   roles: []     # explicit single-agent mode
+  //
+  // v0.5.1: roles can also be a nested map for per-role adapter overrides:
+  //   roles:
+  //     planner:
+  //       adapter: anthropic
+  //     executor:
+  //       adapter: cli-bridge
+  //       binary: claude
+  //       tier: free
+  //     reviewer:
+  //       adapter: anthropic
+  // The map keys become the roles list (ordering preserved); the values are
+  // surfaced through role_adapters for the runner to consume.
   let roles: string[] | undefined;
+  let role_adapters: Record<string, Record<string, unknown>> | undefined;
   if (Array.isArray(raw.roles)) {
     roles = raw.roles
       .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
       .map((v) => v.trim());
+  } else if (raw.roles && typeof raw.roles === "object") {
+    const obj = raw.roles as Record<string, unknown>;
+    const ids: string[] = [];
+    const map: Record<string, Record<string, unknown>> = {};
+    for (const [id, val] of Object.entries(obj)) {
+      ids.push(id);
+      if (val && typeof val === "object" && !Array.isArray(val)) {
+        map[id] = val as Record<string, unknown>;
+      }
+    }
+    if (ids.length > 0) {
+      roles = ids;
+      if (Object.keys(map).length > 0) role_adapters = map;
+    }
   } else if (typeof raw.roles === "string") {
     const trimmed = raw.roles.trim();
     if (trimmed === "[]") {
@@ -411,6 +543,18 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     } else {
       const items = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
       if (items.length > 0) roles = items;
+    }
+  }
+
+  // v0.5.1: separate `role_adapters:` block also accepted. Merged with any
+  // map-form `roles:` data; sibling field wins on overlap (explicit override).
+  if (raw.role_adapters && typeof raw.role_adapters === "object" && !Array.isArray(raw.role_adapters)) {
+    const sep = raw.role_adapters as Record<string, unknown>;
+    for (const [id, val] of Object.entries(sep)) {
+      if (val && typeof val === "object" && !Array.isArray(val)) {
+        if (!role_adapters) role_adapters = {};
+        role_adapters[id] = val as Record<string, unknown>;
+      }
     }
   }
 
@@ -448,8 +592,29 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     ...(workdir ? { workdir } : {}),
     ...(mcp_servers ? { mcp_servers } : {}),
     ...(roles ? { roles } : {}),
+    ...(role_adapters ? { role_adapters: normalizeRoleAdapters(role_adapters) } : {}),
     ...(budgets ? { budgets } : {}),
   };
+}
+
+// v0.5.1: shape each role_adapters entry into a RoleAdapterConfig. `adapter`
+// is required at construction time but we don't enforce that until the runner
+// fills in the default; validator surfaces missing-adapter as a clear error.
+function normalizeRoleAdapters(
+  raw: Record<string, Record<string, unknown>>,
+): Record<string, import("./types.js").RoleAdapterConfig> {
+  const out: Record<string, import("./types.js").RoleAdapterConfig> = {};
+  for (const [id, val] of Object.entries(raw)) {
+    const adapter = typeof val.adapter === "string" ? val.adapter : "";
+    const cfg: import("./types.js").RoleAdapterConfig = { adapter };
+    if (typeof val.model === "string") cfg.model = val.model;
+    for (const [k, v] of Object.entries(val)) {
+      if (k === "adapter" || k === "model") continue;
+      cfg[k] = v;
+    }
+    out[id] = cfg;
+  }
+  return out;
 }
 
 const HEADING_ALIASES: Record<string, keyof Omit<BriefSections, "extra">> = {

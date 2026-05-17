@@ -15,8 +15,9 @@ import type {
 import type { ToolExecutor } from "./tools/types.js";
 import { parseBrief, validateBrief, generateBriefId } from "./brief.js";
 import { loadFrameworkDoc } from "./framework.js";
-import { DEFAULT_TIERS } from "./adapters/index.js";
+import { DEFAULT_TIERS, makeAdapter, resolveTier } from "./adapters/index.js";
 import type { AdapterId } from "./adapters/index.js";
+import type { AdapterConfig, AgentAdapter, RoleAdapterConfig } from "./types.js";
 import { runIntake } from "./phases/intake.js";
 import { runExecute } from "./phases/execute.js";
 import { reportBlocker } from "./phases/blocker.js";
@@ -107,20 +108,38 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   // if they didn't realize they were about to spend money. cli-bridge is
   // a special case: it requires shell_exec in authorized_costs because
   // every invocation shells out a child process.
-  // Tier resolution: cli-bridge instances carry their own `tier` (set at
-  // construction). API adapters fall back to DEFAULT_TIERS by id.
-  const tier =
-    (adapter as unknown as { tier?: "free" | "paid" }).tier ??
-    DEFAULT_TIERS[adapter.id as AdapterId] ??
-    "paid";
+  //
+  // v0.5.1: when the brief declares per-role adapter overrides, build a
+  // dedicated adapter per role and surface each in the tier banner. Roles
+  // without overrides reuse the default adapter passed to run(). The map is
+  // computed once and handed to the coordinator as getAdapter(roleId).
   const hasShellExec =
     brief.frontmatter.authorized_costs.includes("shell_exec") ||
     brief.frontmatter.authorized_costs.includes("*");
+
+  const roleAdapterMap = buildRoleAdapterMap(brief.frontmatter.role_adapters, adapter, opts);
+  const usesCliBridgeAtRoot = adapter.id === "cli-bridge";
+  const usesCliBridgeAnywhere =
+    usesCliBridgeAtRoot ||
+    Object.values(roleAdapterMap).some((a) => a.id === "cli-bridge");
+
+  // Default adapter banner (single-agent runs use only this one).
+  const defaultTier = adapterTier(adapter);
   io.banner(
-    `Adapter: ${adapter.id}  model: ${adapter.model}  tier: ${tier}` +
-      (tier === "paid" ? "  (this run may incur API charges)" : "  (no API charges expected)"),
+    `Adapter: ${adapter.id}  model: ${adapter.model}  tier: ${defaultTier}` +
+      (defaultTier === "paid" ? "  (this run may incur API charges)" : "  (no API charges expected)"),
   );
-  if (adapter.id === "cli-bridge" && !hasShellExec) {
+
+  // Per-role adapter banner (only when overrides are present).
+  if (Object.keys(roleAdapterMap).length > 0) {
+    const lines: string[] = ["Per-role adapters:"];
+    for (const [roleId, a] of Object.entries(roleAdapterMap)) {
+      lines.push(`  ${roleId.padEnd(10)} ${a.id}  model: ${a.model}  tier: ${adapterTier(a)}`);
+    }
+    io.write(lines.join("\n") + "\n");
+  }
+
+  if (usesCliBridgeAnywhere && !hasShellExec) {
     io.write(
       "\nopenwar: cli-bridge requires `shell_exec` in the brief's authorized_costs.\n" +
         "Add it under frontmatter:\n\n" +
@@ -260,11 +279,23 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     const { runCoordinator, resolveBudgets } = await import("./coordinator/index.js");
     const budgets = { ...resolveBudgets(brief), ...(opts.runtimeBudgets ?? {}) };
     transition("execute", "intake accepted (multi-agent)");
+    // v0.5.1: persist which adapter each role resolved to so `inspect` can
+    // surface the run shape and resume rebuilds adapters from this map without
+    // re-reading the brief. Optional field; older sessions stay readable.
+    if (Object.keys(roleAdapterMap).length > 0) {
+      const adapterIdsMeta = session.meta as typeof session.meta & {
+        role_adapter_ids?: Record<string, { id: string; model: string }>;
+      };
+      adapterIdsMeta.role_adapter_ids = {};
+      for (const [roleId, a] of Object.entries(roleAdapterMap)) {
+        adapterIdsMeta.role_adapter_ids[roleId] = { id: a.id, model: a.model };
+      }
+    }
     persist();
     const coordResult = await runCoordinator({
       brief,
       framework: system,
-      adapter,
+      getAdapter: (roleId) => roleAdapterMap[roleId] ?? adapter,
       io,
       roleIds,
       budgets,
@@ -562,5 +593,53 @@ async function resolveMode(
   if (/\b(gated|per[-\s]?step|step)\b/.test(reply)) return "gated";
   const picked = await io.prompt('Execution mode? Type "gated" or "auto":');
   return picked.trim().toLowerCase() === "auto" ? "auto" : "gated";
+}
+
+// v0.5.1: tier resolution that prefers the adapter's own `tier` property
+// (cli-bridge attaches one at construction) and falls back to DEFAULT_TIERS.
+function adapterTier(adapter: AgentAdapter): "free" | "paid" {
+  const fromAdapter = (adapter as unknown as { tier?: "free" | "paid" }).tier;
+  if (fromAdapter === "free" || fromAdapter === "paid") return fromAdapter;
+  return DEFAULT_TIERS[adapter.id as AdapterId] ?? "paid";
+}
+
+// v0.5.1: build the per-role adapter map from the brief's role_adapters
+// frontmatter. Roles without an override get omitted; the coordinator falls
+// back to the runtime default. Construction failures (unknown adapter id,
+// missing API key) throw at this point, before Phase 0, so the operator
+// sees the problem before any agent call goes out.
+function buildRoleAdapterMap(
+  spec: Record<string, RoleAdapterConfig> | undefined,
+  defaultAdapter: AgentAdapter,
+  opts: RunOptions,
+): Record<string, AgentAdapter> {
+  void opts;
+  void defaultAdapter;
+  const map: Record<string, AgentAdapter> = {};
+  if (!spec) return map;
+  for (const [roleId, cfg] of Object.entries(spec)) {
+    if (!cfg.adapter) continue;
+    const adapterConfig: AdapterConfig = { id: cfg.adapter };
+    if (cfg.model) adapterConfig.model = cfg.model;
+    const extra: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(cfg)) {
+      if (k === "adapter" || k === "model") continue;
+      extra[k] = v;
+    }
+    if (Object.keys(extra).length > 0) adapterConfig.extra = extra;
+    const built = makeAdapter(adapterConfig);
+    if (!built.isConfigured()) {
+      throw new Error(
+        `Role "${roleId}" is pinned to adapter "${cfg.adapter}" but it is not configured. ` +
+          `Set the adapter's API key env var, or change role_adapters.${roleId}.adapter.`,
+      );
+    }
+    // Attach resolved tier so adapterTier() reports correctly for adapters
+    // that don't carry a `tier` field of their own (everything except
+    // cli-bridge today). resolveTier() reads extra.tier if present.
+    (built as unknown as { tier?: "free" | "paid" }).tier = resolveTier(adapterConfig);
+    map[roleId] = built;
+  }
+  return map;
 }
 
