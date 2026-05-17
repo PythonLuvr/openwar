@@ -28,7 +28,7 @@ Discipline, not intelligence. Kubernetes for agents, not a smarter brain.
 
 ## What OpenWar is not
 
-Not a smarter model. OpenWar runs on top of any BYOK LLM (Claude, OpenAI, Gemini, Grok, openai-compat for local Ollama, or a local CLI agent via the cli-bridge adapter). The model's reasoning quality is the model's problem.
+Not a smarter model. OpenWar runs on top of whatever agent you already use: a local CLI agent (Claude Code, Codex CLI, Gemini CLI, aider) via the cli-bridge adapter, or any BYOK API (Anthropic, OpenAI, Gemini, Grok, or openai-compat for local Ollama and vLLM). The model's reasoning quality is the model's problem.
 
 Not a memory system or knowledge base. Persistent project memory is planned for v0.6, but the current scope is behavioral discipline, not cognitive infrastructure.
 
