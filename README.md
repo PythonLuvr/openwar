@@ -85,8 +85,11 @@ Provide an API key for whichever adapter you pick:
 | `gemini`        | `GEMINI_API_KEY`         | `gemini-2.0-flash`    |
 | `grok`          | `XAI_API_KEY`            | `grok-2-latest`       |
 | `openai-compat` | `OPENAI_COMPAT_API_KEY`  | (specify with `--base-url`) |
+| `cli-bridge`    | (none, uses local CLI)   | (specify with `--cli-binary`) |
 
 `openai-compat` covers OpenRouter, Groq, Together, Ollama, vLLM, llama.cpp, and anything else speaking OpenAI's chat-completions protocol.
+
+`cli-bridge` (new in v0.5) treats a local CLI binary like Claude Code, Codex CLI, Gemini CLI, or aider as the agent. OpenWar shells out, captures stdout, applies the phase machine. See [`examples/cli-bridge-brief.md`](./examples/cli-bridge-brief.md) and the "Bridging to CLI agents" section of [`openwar.md`](./openwar.md).
 
 ## What the runtime enforces
 
@@ -294,7 +297,7 @@ System prompts cost nothing to install and work with any runtime. The runtime is
 
 ## Versioning
 
-Current: **v0.4.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
+Current: **v0.5.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
 - v0.1: framework doc only (single markdown file).
 - v0.2: runtime, CLI, BYOK adapters for Anthropic, OpenAI, Gemini, Grok, OpenAI-compat.

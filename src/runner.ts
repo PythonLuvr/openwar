@@ -15,6 +15,8 @@ import type {
 import type { ToolExecutor } from "./tools/types.js";
 import { parseBrief, validateBrief, generateBriefId } from "./brief.js";
 import { loadFrameworkDoc } from "./framework.js";
+import { DEFAULT_TIERS } from "./adapters/index.js";
+import type { AdapterId } from "./adapters/index.js";
 import { runIntake } from "./phases/intake.js";
 import { runExecute } from "./phases/execute.js";
 import { reportBlocker } from "./phases/blocker.js";
@@ -99,6 +101,41 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     session.meta.phase = to;
     session.meta.transitions.push(t);
   };
+
+  // ------------------- Phase 0 cost-tier preview -------------------
+  // Surface adapter + tier before Phase 0 so the operator can abort early
+  // if they didn't realize they were about to spend money. cli-bridge is
+  // a special case: it requires shell_exec in authorized_costs because
+  // every invocation shells out a child process.
+  // Tier resolution: cli-bridge instances carry their own `tier` (set at
+  // construction). API adapters fall back to DEFAULT_TIERS by id.
+  const tier =
+    (adapter as unknown as { tier?: "free" | "paid" }).tier ??
+    DEFAULT_TIERS[adapter.id as AdapterId] ??
+    "paid";
+  const hasShellExec =
+    brief.frontmatter.authorized_costs.includes("shell_exec") ||
+    brief.frontmatter.authorized_costs.includes("*");
+  io.banner(
+    `Adapter: ${adapter.id}  model: ${adapter.model}  tier: ${tier}` +
+      (tier === "paid" ? "  (this run may incur API charges)" : "  (no API charges expected)"),
+  );
+  if (adapter.id === "cli-bridge" && !hasShellExec) {
+    io.write(
+      "\nopenwar: cli-bridge requires `shell_exec` in the brief's authorized_costs.\n" +
+        "Add it under frontmatter:\n\n" +
+        "authorized_costs:\n  - shell_exec\n\n" +
+        "Aborting before Phase 0.\n",
+    );
+    return {
+      session_id: session.meta.brief_id,
+      final_phase: session.meta.phase,
+      completed: false,
+      halted: true,
+      halt_reason: "cli_bridge_requires_shell_exec",
+      messages: session.messages,
+    };
+  }
 
   // ------------------- Phase 0 -------------------
   let mode: ExecutionMode;

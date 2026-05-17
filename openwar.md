@@ -284,22 +284,16 @@ The CLI's *internal* authorization is its own business. Claude Code asks for its
 
 ### Sub-task delegation in multi-agent mode
 
-Under multi-agent orchestration (v0.4+), the cli-bridge becomes role-scoped. A brief can configure the executor to be a cli-bridge while the planner and reviewer run on a different adapter:
+Under multi-agent orchestration (v0.4+), the cli-bridge can drive an entire run end to end. Every role (planner, executor, reviewer, optional critic) calls the same bridged CLI, and the coordinator applies the phase machine to each role's stdout independently. This is the v0.5 shape.
 
-```yaml
-roles:
-  planner: { adapter: anthropic }
-  executor: { adapter: cli-bridge, binary: claude }
-  reviewer: { adapter: anthropic }
-```
-
-The planner produces a linear plan as usual. Each sub-task gets dispatched to Claude Code via the bridge. The reviewer reads the executor's output (and any files it modified in the workdir) and produces a verdict. The framework applies recursively: Claude Code is expected to follow Phase 0/2/3 per sub-task the same way an LLM adapter is.
+Per-role adapter mixing (planner on a cheap API, executor on a local CLI, reviewer on yet another model) is the natural next step but requires a brief-schema change to support `roles: { executor: { adapter: cli-bridge, binary: claude }, ... }` per-role objects. That schema lands in v0.5.1; until then, pick one adapter for the whole brief.
 
 ### What's NOT in v0.5
 
 v0.5 ships the bridge as a *stdout coordinator*. The first iteration does not include:
 
-- **Native tool-call translation.** The CLI is responsible for its own tools. OpenWar's tool-definition schema is not surfaced to bridged CLIs in v0.5. Operators wanting to share native tools between API agents and CLI agents wait for v0.5.1+.
+- **Per-role adapter mixing.** Brief schema today accepts a flat list of role ids. v0.5.1 extends it to per-role adapter overrides so a single brief can mix paid API roles with free CLI roles.
+- **Native tool-call translation.** The CLI is responsible for its own tools. OpenWar's tool-definition schema is not surfaced to bridged CLIs in v0.5. Operators wanting to share native tools between API agents and CLI agents wait for v0.5.2+.
 - **Bidirectional MCP brokering.** The CLI's MCP servers are the CLI's business. OpenWar's MCP servers are OpenWar's. No automatic forwarding.
 - **Session-state forwarding.** OpenWar's session persistence does not include the CLI's internal session ID. If the bridged CLI supports resume, the operator manages it through the CLI's own conventions.
 
@@ -309,4 +303,4 @@ These are roadmap items, not omissions. The smaller surface area for v0.5 reduce
 
 ## Versioning
 
-OpenWar is versioned. Current: v0.4 (framework doc + runtime + multi-agent orchestration). v0.5 introduces the `cli-bridge` adapter type documented above; persistent project memory moves to v0.6, observability dashboards to v0.7. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.5 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter). Persistent project memory lands in v0.6, observability dashboards in v0.7. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.

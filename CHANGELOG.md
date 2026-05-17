@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.0
+
+cli-bridge adapter. OpenWar treats a CLI binary (Claude Code, Codex CLI, Gemini CLI, aider, your own custom tool) as an agent. The runtime delegates a brief by shelling out, captures stdout, and feeds it through the existing phase machine + detectors. Most multi-agent frameworks assume every agent is an API call; OpenWar is the first to coordinate across API agents and CLI agents in the same brief.
+
+### Added
+
+- **`src/adapters/cli-bridge.ts`**: new adapter implementing the existing `AgentAdapter` interface. Spawns the configured binary via `child_process.spawn`, pipes the prompt in via stdin, streams stdout as `text_delta` events, emits a `done` event on clean exit and an `error` event on timeout, non-zero exit, or spawn failure. Hand-rolled signal handling (SIGTERM with 5s SIGKILL escalation). Cross-platform via Node stdlib only; zero new dependencies.
+- **Adapter config**: `extra.binary` (required), `extra.args`, `extra.timeout_ms` (default 10 min), `extra.working_dir`, `extra.env`, `extra.framework_prefix` (default true; prepends `openwar.md` to the prompt so non-OpenWar-aware CLIs still pick up the behavioral overlay), `extra.tier` (`"free"` default; set `"paid"` if your bridged CLI bills per call).
+- **Tier-aware cost preview**. Every adapter now declares a tier (`free` or `paid`) via `DEFAULT_TIERS` in `src/adapters/index.ts`. API adapters default to `paid`; cli-bridge and mock default to `free`. The runner emits a tier banner before Phase 0 confirmation so the operator sees the cost shape of a run before any LLM call fires. `resolveTier()` and `DEFAULT_TIERS` are public exports for integrators.
+- **Authorization gate**: cli-bridge requires `shell_exec` in `authorized_costs`. The runner halts cleanly with `halt_reason: "cli_bridge_requires_shell_exec"` if missing, surfacing a copy-pasteable frontmatter snippet instead of failing at first spawn.
+- **CLI flags**: `--cli-binary <path>`, `--cli-arg a,b,c` (comma-separated; use brief `cli.args` array for arguments containing literal commas), `--cli-timeout-ms N`, `--cli-no-framework` (skip prepending `openwar.md`), `--cli-tier free|paid`.
+- **Mock CLI fixture** at `tests/fixtures/mock-cli/cli.mjs`: synthetic CLI controlled by env vars (`MOCK_CLI_OUTPUT`, `MOCK_CLI_SLEEP_MS`, `MOCK_CLI_EXIT_CODE`, `MOCK_CLI_ECHO_STDIN`, etc). Tests never depend on Claude Code, Gemini CLI, or any real binary being installed.
+- **Tests** at `tests/adapters/cli-bridge.test.ts`: 13 cases covering success, chunked streaming, non-zero exit with stderr capture, timeout enforcement (SIGTERM), spawn failure on missing binary, framework_prefix on/off, tier defaults, tier overrides, missing-binary throws at construction, and factory wiring through `makeAdapter`.
+- **Examples**: `examples/cli-bridge-brief.md` (single-agent demo against `claude` by default) and `examples/cli-bridge-multi-agent-brief.md` (full coordinator run with cli-bridge driving every role).
+
+### Changed
+
+- `openwar.md` framework doc gains a "Bridging to CLI agents (v0.5+)" section that defines the pattern, lists when-to-use and when-NOT-to-use, explains how the phase machine applies across the bridge, documents the authorization model, and enumerates explicit non-goals for v0.5 (no native tool-call translation, no MCP brokering, no session-state forwarding, no per-role adapter mixing).
+- README quickstart now lists `cli-bridge` in the adapter table and points to the example briefs.
+- `AdapterId` union extended with `"cli-bridge"`. `listAdapters()` now reports each adapter's tier.
+
+### Notes for forkers and War Room integrators
+
+- Zero new runtime dependencies. The adapter uses `child_process.spawn`, `node:timers`, and existing OpenWar internals. No `execa`, no `cross-spawn`.
+- The mock CLI fixture is a useful starting point if you ship your own bridge tests. Copy `tests/fixtures/mock-cli/cli.mjs` into your suite and parameterize via env vars.
+- War Room consumes OpenWar via `presets/frameworks/openwar.md` and `scripts/update-frameworks.mjs`. After v0.5 ships, bump the pinned tag in War Room's `SOURCES` list to vendor the new framework doc.
+- Per-role adapter mixing (planner on a cheap API, executor on a CLI, reviewer on yet another model) is the obvious next step but requires a brief-schema change to the `roles:` field. Designing that for v0.5.1.
+
 ## 0.4.0
 
 Multi-agent orchestration. OpenWar graduates from one-agent-per-brief to a coordinated planner / executor / reviewer loop with optional critic disagreement, per-role tool scoping, recursive framework enforcement, cost budgets, and resumable mid-state sessions.

@@ -73,6 +73,9 @@ Usage:
                          [--mcp-server name=command] [--resume] [--ephemeral]
                          [--roles planner,executor,reviewer[,critic]]
                          [--max-tokens N] [--max-minutes N] [--single]
+                         [--cli-binary <path>] [--cli-arg a,b,c]
+                         [--cli-timeout-ms N] [--cli-no-framework]
+                         [--cli-tier free|paid]
   openwar resume <brief_id>
   openwar list
   openwar inspect <brief_id> [--transcript]
@@ -89,7 +92,7 @@ Usage:
   openwar --help
 
 Adapters:
-  anthropic | openai | gemini | grok | openai-compat | mock
+  anthropic | openai | gemini | grok | openai-compat | cli-bridge | mock
 
 Adapter env vars (BYOK):
   ANTHROPIC_API_KEY        Anthropic Claude
@@ -114,6 +117,30 @@ async function commandRun(parsed: ParsedFlags): Promise<number> {
   const config: AdapterConfig = { id: adapterId };
   if (typeof parsed.flags["model"] === "string") config.model = parsed.flags["model"];
   if (typeof parsed.flags["base-url"] === "string") config.baseUrl = parsed.flags["base-url"];
+
+  // v0.5: cli-bridge adapter flags. --cli-binary is required when --adapter is
+  // cli-bridge unless the brief frontmatter supplies a cli.binary instead.
+  // --cli-arg accepts a comma-separated list (escape commas via the brief
+  // frontmatter's cli.args array if you need literal commas in an argument).
+  if (adapterId === "cli-bridge") {
+    const extra: Record<string, unknown> = {};
+    if (typeof parsed.flags["cli-binary"] === "string") extra.binary = parsed.flags["cli-binary"];
+    if (typeof parsed.flags["cli-arg"] === "string") {
+      extra.args = parsed.flags["cli-arg"]
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    if (typeof parsed.flags["cli-timeout-ms"] === "string") {
+      const n = Number(parsed.flags["cli-timeout-ms"]);
+      if (Number.isFinite(n) && n > 0) extra.timeout_ms = n;
+    }
+    if (parsed.flags["cli-no-framework"] === true) extra.framework_prefix = false;
+    if (parsed.flags["cli-tier"] === "free" || parsed.flags["cli-tier"] === "paid") {
+      extra.tier = parsed.flags["cli-tier"];
+    }
+    config.extra = extra;
+  }
 
   let adapter;
   try {
