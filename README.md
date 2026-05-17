@@ -14,7 +14,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-OpenWar replaces eager-customer-service-rep defaults with the behavior of a senior peer. It confirms briefs before acting, breaks work into phases, asks before doing anything destructive, and writes like an adult who's busy.
+Most agent frameworks try to make agents feel smarter. OpenWar tries to make them behave better.
+
+It replaces eager-customer-service-rep defaults with the behavior of a senior peer. The agent confirms briefs before acting, breaks work into phases, asks before doing anything destructive, and writes like an adult who's busy. The runtime catches the moments where the agent would otherwise skip those rules and asks it to restate.
+
+Discipline, not intelligence. Kubernetes for agents, not a smarter brain.
 
 This is WarBit. He runs OpenWar. He does not "happily help you with that."
 
@@ -24,7 +28,19 @@ This is WarBit. He runs OpenWar. He does not "happily help you with that."
   <em>Default agent behavior. Sycophantic, eager, drowning in half-finished context.</em>
 </p>
 
-You can use OpenWar two ways:
+## What OpenWar is not
+
+Not a smarter model. OpenWar runs on top of any BYOK LLM (Claude, OpenAI, Gemini, Grok, openai-compat for local Ollama, or a local CLI agent via the cli-bridge adapter). The model's reasoning quality is the model's problem.
+
+Not a memory system or knowledge base. Persistent project memory is planned for v0.6, but the current scope is behavioral discipline, not cognitive infrastructure.
+
+Not an autonomous-agent platform. OpenWar's whole design assumes the operator is in the loop. Auto-pilot mode just makes the loop quieter; it never removes the operator's right to stop the run.
+
+---
+
+## How to use OpenWar
+
+You can use it two ways:
 
 1. **As a runtime** (new in v0.2, expanded in v0.3 with tool calling). Install the package, point it at a brief, watch the phase machine enforce the framework against any BYOK LLM. The runtime is opinionated: no flag to disable Phase 3, no way to skip the Confirmation Summary.
 2. **As a system prompt** (v0.1, still supported). Paste [`openwar.md`](./openwar.md) into Claude Code's CLAUDE.md, Cursor's rules, Hermes, OpenClaw, or anywhere else. The agent's behavior changes; nothing else does.
