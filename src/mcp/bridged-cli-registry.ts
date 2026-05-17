@@ -23,7 +23,7 @@
 // binary (lowercased, .cmd / .bat / .exe stripped). This handles
 // --cli-binary claude, --cli-binary claude.cmd, and absolute paths.
 
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
 export interface ConfigPathContext {
   workdir: string;
@@ -94,8 +94,13 @@ const FALLBACK_STRATEGY: BridgedCliStrategy = {
 };
 
 function normalizeBinary(binary: string): string {
-  const base = basename(binary).toLowerCase();
-  return base.replace(/\.(cmd|bat|exe)$/i, "");
+  // Split on both POSIX and Windows separators. Node's path.basename only
+  // understands the active-platform separator, so a Windows-style path
+  // passed on Linux (or vice versa) survives basename() intact and the
+  // map lookup misses. Manual split handles both.
+  const lastSep = Math.max(binary.lastIndexOf("/"), binary.lastIndexOf("\\"));
+  const tail = lastSep === -1 ? binary : binary.slice(lastSep + 1);
+  return tail.toLowerCase().replace(/\.(cmd|bat|exe)$/i, "");
 }
 
 export function resolveBridgedCliStrategy(binary: string): BridgedCliStrategy {
