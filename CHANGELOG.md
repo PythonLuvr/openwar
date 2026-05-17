@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.6.0
+
+Persistent project memory. v0.5.x runs were stateless: every brief started from a cold slate and the operator had to manually paste prior context, decisions, and conventions into each new brief. v0.6 introduces a per-project memory store that agents can read and write across briefs, plus a `openwar memory` subcommand for the operator to inspect and prune outside a session.
+
+This is intentionally minimum scaffolding. No retrieval scoring, no summarization decay, no automatic conflict resolution, no cross-project memory, no semantic search. The feature ships the persistence primitive and the read/write surface; v0.6.x can layer retrieval on top if real usage demands it. The framework's identity (discipline over intelligence) drives the scope: memory is for *the operator's project work product*, not a knowledge-base product wrapped in agent clothing.
+
+### Added
+
+- **`~/.openwar/projects/<project-slug>/` as a per-project persistence root** sibling to `sessions/`. Holds three JSONL category files (`decisions.jsonl`, `knowledge.jsonl`, `constraints.jsonl`), append-only, atomic writes through a tmp-stage. Corrupted-line recovery on read: bad rows are skipped, the 1-based line index is reported alongside the valid entries, the read keeps going.
+- **Memory persistence module** at `src/state/memory.ts`. `appendMemoryEntry()`, `readMemory()`, `removeMemoryEntry()`, `renderMemoryForPrompt()`. Three typed entry shapes:
+  - `decisions { summary, rationale, superseded_by? }` (why-we-chose-X records)
+  - `knowledge { content }` (longer-form notes)
+  - `constraints { rule, rationale? }` (persistent rules)
+  - All entries also carry `id`, `at`, optional `brief_id`, and optional `metadata`.
+- **Two native tools** under the existing `filesystem_read` / `filesystem_write` categories (no new top-level auth categories added):
+  - `read_project_memory(category, query?, limit?)` returns matching entries. Default-allowed via `filesystem_read`. Query is a case-insensitive substring filter against the entry's primary text.
+  - `write_project_memory(category, entry)` appends an entry. Phase 3 prompts unless `filesystem_write` is in the brief's `authorized_costs`.
+- **Brief frontmatter `inherit_memory: true|false`** (default false). When true, the runtime renders a structured per-category summary of the project's memory and injects it into the system prompt at session start. Cap is 20 entries per category in reverse-chronological order. v0.6.x can revisit the cap and add retrieval scoring.
+- **Role-scoped memory visibility for multi-agent runs.** Planner, reviewer, and critic see all three categories (full project context for planning, evaluation, and re-review). Executor sees `knowledge` + `constraints` only and does not see `decisions`, so prior-decision bias doesn't seep into per-sub-task execution. Reviewer can still raise prior-decision concerns because reviewer has the full view. Custom roles default to the full view.
+- **`openwar memory` subcommand** for out-of-session inspection and pruning:
+  - `openwar memory list <project> [--category decisions|knowledge|constraints]`
+  - `openwar memory show <project> <entry_id>`
+  - `openwar memory remove <project> <entry_id>`
+- **`SandboxContext` gains optional `project_slug` and `brief_id` fields** so the memory tools can resolve scope from the execution context without re-reading the brief. The runner populates both at session start.
+- **Tests**: `tests/state/memory.test.ts` (11 cases covering append, read, query, corrupted-line skip, remove, render), `tests/tools/memory-tools.test.ts` (9 cases covering tool registration, auth categories, executor scope rejection, end-to-end read/write), `tests/roles/memory-visibility.test.ts` (7 cases covering per-role category lists and executor-view omission of decisions), `tests/brief-inherit-memory.test.ts` (3 cases covering frontmatter parsing).
+
+### Explicit non-goals (still)
+
+- No retrieval scoring or semantic search. Cap + reverse-chronological is the v0.6 read story.
+- No automatic conflict resolution. Two contradictory entries are both visible; the agent surfaces the conflict in Phase 0 as an unknown for the operator to resolve.
+- No cross-project memory. Project is the persistence boundary.
+- No memory for the framework or runtime configuration. Those stay file-based and version-controlled.
+- No new authorization top-level categories. Memory reuses `filesystem_read` / `filesystem_write`.
+
+### Notes for forkers and War Room integrators
+
+- Zero new runtime dependencies. Memory persistence is pure Node stdlib (`fs/promises`, JSONL on disk, tmp+rename for atomicity).
+- No state schema bump. `SessionMeta` is unchanged. `~/.openwar/projects/` is a parallel persistence root, not an extension of the session schema.
+- Backwards-compatible. Existing briefs without `inherit_memory` continue to behave identically. Existing sessions resume cleanly under v0.6.
+- War Room can consume `appendMemoryEntry`, `readMemory`, `removeMemoryEntry`, and `renderMemoryForPrompt` directly from `@pythonluvr/openwar` once published. The memory surface is exported through the package root.
+- `OPENWAR_HOME` env var still scopes both `sessions/` and `projects/`, useful for tests and integrators.
+
 ## 0.5.1
 
 Per-role adapter mixing. v0.4 introduced the planner / executor / reviewer / critic coordinator, but every role had to share the same adapter. v0.5.1 lets a brief pin each role to its own adapter (and optional model + extras), so a single run can keep planning and review on a cheap API while delegating execution to a local CLI agent. The coordinator threads the right adapter per role; the phase machine and detectors run uniformly against every role's output.

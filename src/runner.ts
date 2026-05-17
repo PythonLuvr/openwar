@@ -36,6 +36,7 @@ import { loadHostAllowlist } from "./sandbox/host-allowlist.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { MCPClient, StdioTransport, loadGlobalMcpConfig, splitCommand } from "./mcp/index.js";
+import { renderMemoryForRole } from "./roles/memory-visibility.js";
 
 export async function run(opts: RunOptions): Promise<RunResult> {
   if (!opts.briefPath && !opts.briefSource) {
@@ -62,7 +63,16 @@ export async function run(opts: RunOptions): Promise<RunResult> {
 
   // Compose the system prompt: framework doc verbatim, no inlining.
   const framework = loadFrameworkDoc();
-  const system = framework;
+  // v0.6: if the brief opts into inherit_memory, prepend the project's
+  // memory summary (all categories) to the framework for single-agent runs.
+  // Multi-agent runs apply role-scoped visibility inside the coordinator.
+  let system = framework;
+  if (brief.frontmatter.inherit_memory) {
+    const memoryBlock = await renderMemoryForRole(brief.frontmatter.project, null);
+    if (memoryBlock) {
+      system = `${framework}\n\n---\n\n${memoryBlock}`;
+    }
+  }
 
   // Resolve / open session.
   const briefId = opts.sessionId ?? brief.frontmatter.brief_id ?? generateBriefId();
@@ -213,6 +223,8 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     defaultMaxOutputBytes: 1_000_000,
     httpAllowlist,
     shellEnabled: !opts.disableShell,
+    project_slug: brief.frontmatter.project,
+    brief_id: session.meta.brief_id,
   });
 
   const toolDefinitions: ToolDefinition[] = [];

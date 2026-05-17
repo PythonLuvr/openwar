@@ -88,6 +88,9 @@ Usage:
   openwar mcp add <name> <command...>
   openwar mcp remove <name>
   openwar mcp test <name>
+  openwar memory list <project> [--category decisions|knowledge|constraints]
+  openwar memory show <project> <entry_id>
+  openwar memory remove <project> <entry_id>
   openwar version
   openwar --help
 
@@ -495,6 +498,82 @@ function mcpConfigPath(): string {
   return join(homedir(), ".openwar", "mcp.json");
 }
 
+// v0.6: out-of-session inspection and pruning of per-project memory.
+async function commandMemory(parsed: ParsedFlags): Promise<number> {
+  const { readMemory, removeMemoryEntry, MEMORY_CATEGORIES } =
+    await import("./state/memory.js");
+  type Cat = typeof MEMORY_CATEGORIES[number];
+  const sub = parsed.positional[1];
+  const w = process.stdout.write.bind(process.stdout);
+
+  if (sub === "list") {
+    const project = parsed.positional[2];
+    if (!project) {
+      process.stderr.write("openwar memory list: missing <project>\n");
+      return 2;
+    }
+    const cats: Cat[] =
+      typeof parsed.flags["category"] === "string" &&
+      MEMORY_CATEGORIES.includes(parsed.flags["category"] as Cat)
+        ? [parsed.flags["category"] as Cat]
+        : [...MEMORY_CATEGORIES];
+    for (const cat of cats) {
+      const { entries, corrupted_lines } = await readMemory(project, { category: cat, limit: 0 });
+      w(`\n=== ${cat} (${entries.length}${corrupted_lines.length ? `, ${corrupted_lines.length} corrupted` : ""}) ===\n`);
+      for (const e of entries) {
+        const head = `${e.id}  ${e.at}`;
+        if (e.category === "decisions") w(`  ${head}  ${e.summary}\n`);
+        else if (e.category === "knowledge") w(`  ${head}  ${e.content.slice(0, 80).replace(/\s+/g, " ")}\n`);
+        else w(`  ${head}  ${e.rule}\n`);
+      }
+      if (corrupted_lines.length > 0) {
+        w(`  (corrupted lines: ${corrupted_lines.join(", ")}; inspect ~/.openwar/projects/${project}/${cat}.jsonl)\n`);
+      }
+    }
+    return 0;
+  }
+
+  if (sub === "show") {
+    const project = parsed.positional[2];
+    const entryId = parsed.positional[3];
+    if (!project || !entryId) {
+      process.stderr.write("openwar memory show: needs <project> <entry_id>\n");
+      return 2;
+    }
+    for (const cat of MEMORY_CATEGORIES) {
+      const { entries } = await readMemory(project, { category: cat, limit: 0 });
+      const found = entries.find((e) => e.id === entryId);
+      if (found) {
+        w(JSON.stringify(found, null, 2) + "\n");
+        return 0;
+      }
+    }
+    process.stderr.write(`openwar memory show: entry "${entryId}" not found in project "${project}"\n`);
+    return 1;
+  }
+
+  if (sub === "remove") {
+    const project = parsed.positional[2];
+    const entryId = parsed.positional[3];
+    if (!project || !entryId) {
+      process.stderr.write("openwar memory remove: needs <project> <entry_id>\n");
+      return 2;
+    }
+    for (const cat of MEMORY_CATEGORIES) {
+      const removed = await removeMemoryEntry(project, cat, entryId);
+      if (removed) {
+        w(`Removed ${entryId} from ${cat}.\n`);
+        return 0;
+      }
+    }
+    process.stderr.write(`openwar memory remove: entry "${entryId}" not found in project "${project}"\n`);
+    return 1;
+  }
+
+  process.stderr.write(`openwar memory: unknown subcommand "${sub ?? ""}". See 'openwar --help'.\n`);
+  return 2;
+}
+
 async function commandMcp(parsed: ParsedFlags): Promise<number> {
   const sub = parsed.positional[1];
   const w = process.stdout.write.bind(process.stdout);
@@ -616,6 +695,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return await commandRoles();
     case "plan":
       return await commandPlan(parsed);
+    case "memory":
+      return await commandMemory(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;

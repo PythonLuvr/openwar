@@ -18,6 +18,12 @@ export interface SandboxContextFields {
   // Whether shell_exec is permitted in this session. Independent of the
   // authorization check; this is a hard kill switch (--no-shell CLI flag).
   shellEnabled: boolean;
+  // v0.6: brief.project, populated by the runner. Scopes per-project memory
+  // reads/writes. Optional so tool tests can construct minimal contexts.
+  project_slug?: string;
+  // v0.6: brief_id, populated by the runner. Stamped onto memory writes for
+  // provenance.
+  brief_id?: string;
 }
 
 export class SandboxContext {
@@ -26,6 +32,8 @@ export class SandboxContext {
   readonly defaultMaxOutputBytes: number;
   readonly httpAllowlist: HostAllowlist | null;
   readonly shellEnabled: boolean;
+  readonly project_slug?: string;
+  readonly brief_id?: string;
 
   private constructor(fields: SandboxContextFields) {
     this.workdir = fields.workdir;
@@ -33,6 +41,8 @@ export class SandboxContext {
     this.defaultMaxOutputBytes = fields.defaultMaxOutputBytes;
     this.httpAllowlist = fields.httpAllowlist;
     this.shellEnabled = fields.shellEnabled;
+    if (fields.project_slug) this.project_slug = fields.project_slug;
+    if (fields.brief_id) this.brief_id = fields.brief_id;
     Object.freeze(this);
   }
 

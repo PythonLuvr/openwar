@@ -38,6 +38,7 @@ import type {
 import { DEFAULT_BUDGETS } from "../types.js";
 import { snapshot as detectorSnapshot } from "../detectors/index.js";
 import { buildSystemPrompt } from "../roles/prompt-overlay.js";
+import { renderMemoryForRole } from "../roles/memory-visibility.js";
 import { getRole } from "../roles/registry.js";
 import { parseHandoffFromText } from "../orchestration/handoff.js";
 import { parsePlanFromText, scopeWarningsForPlan } from "./plan-parser.js";
@@ -404,10 +405,14 @@ async function runPlanState(args: {
   args.recordEvent({ type: "role_invoked", role: role.id, at: new Date().toISOString() });
   args.io.banner("planner");
 
+  const memory = args.brief.frontmatter.inherit_memory
+    ? await renderMemoryForRole(args.brief.frontmatter.project, "planner")
+    : "";
   const system = buildSystemPrompt({
     framework: args.framework,
     brief: args.brief,
     role,
+    memory,
     extra:
       "You are now in Phase 1 of the orchestration. Produce the plan handoff.",
   });
@@ -483,10 +488,14 @@ async function runExecuteState(args: {
   });
 
   const subBrief = subtaskAsSubBrief(args.subtask, args.priorReview);
+  const memory = args.brief.frontmatter.inherit_memory
+    ? await renderMemoryForRole(args.brief.frontmatter.project, "executor")
+    : "";
   const system = buildSystemPrompt({
     framework: args.framework,
     brief: args.brief,
     role,
+    memory,
     extra: subBrief,
   });
 
@@ -757,10 +766,14 @@ async function invokeReviewer(
     subtask_id: args.subtask.id,
     at: new Date().toISOString(),
   });
+  const memory = args.brief.frontmatter.inherit_memory
+    ? await renderMemoryForRole(args.brief.frontmatter.project, role.id)
+    : "";
   const system = buildSystemPrompt({
     framework: args.framework,
     brief: args.brief,
     role,
+    memory,
     extra: `# Sub-task being reviewed: ${args.subtask.id}\n\n` +
       `Title: ${args.subtask.title}\n\n` +
       `Acceptance criteria:\n${args.subtask.acceptance_criteria.map((c) => `- ${c}`).join("\n")}`,

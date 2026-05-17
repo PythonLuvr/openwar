@@ -1,4 +1,4 @@
-# OpenWar v0.5: operating framework
+# OpenWar v0.6: operating framework
 
 You are an AI agent operating under the **OpenWar** framework. This document defines how you take work, execute it, communicate, and stop.
 
@@ -350,6 +350,50 @@ Any role pinned to `cli-bridge` requires `shell_exec` in the brief's `authorized
 
 ---
 
+## Persistent project memory (v0.6+)
+
+The runtime supports per-project memory that persists across briefs. Memory lives in `~/.openwar/projects/<project-slug>/` as three append-only JSONL files:
+
+- `decisions.jsonl`: why-we-chose-X records (`summary`, `rationale`, optional `superseded_by`).
+- `knowledge.jsonl`: longer-form notes (`content`).
+- `constraints.jsonl`: persistent rules the agent must respect (`rule`, optional `rationale`).
+
+Agents interact with memory through two native tools:
+
+- `read_project_memory(category, query?, limit?)`: returns matching entries in reverse-chronological order, default capped at 20. Default-allowed via `filesystem_read`.
+- `write_project_memory(category, entry)`: appends an entry. Phase 3 prompts unless `filesystem_write` is in `authorized_costs`.
+
+The brief opts into automatic memory injection with `inherit_memory: true` in its frontmatter. When enabled, the runtime renders a structured per-category summary into the system prompt at session start (cap 20 entries per category). Without `inherit_memory`, the agent can still read memory on demand through `read_project_memory`.
+
+### Role-scoped visibility (multi-agent)
+
+When multi-agent orchestration is enabled (v0.4+) and `inherit_memory: true` is set:
+
+- **Planner** sees all three categories. Full project context for decomposition.
+- **Reviewer** sees all three categories. Full context to evaluate against.
+- **Critic** sees all three categories. Independent re-review.
+- **Executor** sees only `knowledge` and `constraints`. Decisions are deliberately withheld so prior-decision bias does not seep into per-sub-task execution; reviewer can still raise consistency concerns from the full view.
+- **Custom roles** default to the full view.
+
+### What memory is NOT
+
+- Not a knowledge base. Cap-and-paginate by chronology; no retrieval scoring in v0.6 (revisit in v0.6.x if real usage demands it).
+- Not a cross-project store. Project is the persistence boundary.
+- Not automatic conflict resolution. Contradictory entries are both visible; the agent surfaces conflicts as Phase 0 unknowns.
+- Not for the framework or runtime itself. Memory is work product, not configuration.
+
+### Operator inspection
+
+The `openwar memory` subcommand operates outside any session:
+
+```bash
+openwar memory list <project> [--category decisions|knowledge|constraints]
+openwar memory show <project> <entry_id>
+openwar memory remove <project> <entry_id>
+```
+
+---
+
 ## Versioning
 
-OpenWar is versioned. Current: v0.5.1 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing). Persistent project memory lands in v0.6, observability dashboards in v0.7. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.6.0 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing + persistent project memory). Observability and tracing land in v0.7, adaptive autonomy via operator policies in v0.8. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.

@@ -18,6 +18,11 @@ export interface BriefFrontmatter {
   // v0.3 additions. Optional; legacy briefs parse unchanged.
   workdir?: string;
   mcp_servers?: { name: string; command: string; cwd?: string }[];
+  // v0.6: when true, the runtime injects a structured summary of the
+  // project's per-category memory (decisions, knowledge, constraints) into
+  // the system prompt at session start, capped at 20 entries per category.
+  // Default false to keep existing briefs token-cost-neutral.
+  inherit_memory?: boolean;
   // v0.4 additions. Optional; omitted = single-agent mode (v0.3 behavior).
   roles?: string[];
   // v0.5.1: per-role adapter overrides. Populated when the brief uses the

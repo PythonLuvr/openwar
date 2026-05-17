@@ -7,6 +7,8 @@ import { LIST_DIR_DEFINITION, listDirExecutor } from "./list_dir.js";
 import { SHELL_EXEC_DEFINITION, shellExecExecutor } from "./shell_exec.js";
 import { HTTP_FETCH_DEFINITION, httpFetchExecutor } from "./http_fetch.js";
 import { APPLY_PATCH_DEFINITION, applyPatchExecutor } from "./apply_patch.js";
+import { READ_PROJECT_MEMORY_DEFINITION, readProjectMemoryExecutor } from "./read_project_memory.js";
+import { WRITE_PROJECT_MEMORY_DEFINITION, writeProjectMemoryExecutor } from "./write_project_memory.js";
 
 export interface NativeTool {
   definition: ToolDefinition;
@@ -20,6 +22,8 @@ export const NATIVE_TOOLS: ReadonlyMap<string, NativeTool> = new Map([
   ["shell_exec",  { definition: SHELL_EXEC_DEFINITION,  executor: shellExecExecutor }],
   ["http_fetch",  { definition: HTTP_FETCH_DEFINITION,  executor: httpFetchExecutor }],
   ["apply_patch", { definition: APPLY_PATCH_DEFINITION, executor: applyPatchExecutor }],
+  ["read_project_memory",  { definition: READ_PROJECT_MEMORY_DEFINITION,  executor: readProjectMemoryExecutor }],
+  ["write_project_memory", { definition: WRITE_PROJECT_MEMORY_DEFINITION, executor: writeProjectMemoryExecutor }],
 ]);
 
 export function listNativeDefinitions(): ToolDefinition[] {

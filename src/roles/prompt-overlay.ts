@@ -17,6 +17,10 @@ export interface OverlayInput {
   // Optional extra context the coordinator wants to pin into the prompt
   // (sub-task instruction, prior handoff text, retry guidance).
   extra?: string;
+  // v0.6: pre-rendered per-project memory block. The runner/coordinator
+  // computes this with the right category visibility for the role and
+  // hands it in. Empty string means no memory to inject.
+  memory?: string;
 }
 
 export function buildSystemPrompt(input: OverlayInput): string {
@@ -25,6 +29,10 @@ export function buildSystemPrompt(input: OverlayInput): string {
   parts.push("\n---\n");
   parts.push("# Brief (verbatim from the operator)\n");
   parts.push(renderBriefForAgent(input.brief).trim());
+  if (input.memory && input.memory.trim()) {
+    parts.push("\n---\n");
+    parts.push(input.memory.trim());
+  }
   parts.push("\n---\n");
   parts.push(`# Role: ${input.role.id}\n`);
   parts.push(input.role.prompt_overlay.trim());

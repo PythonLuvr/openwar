@@ -498,6 +498,11 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     if (mcp_servers.length === 0) mcp_servers = undefined;
   }
 
+  // v0.6: inherit_memory boolean. Default false. When true, the runner reads
+  // ~/.openwar/projects/<slug>/{decisions,knowledge,constraints}.jsonl and
+  // injects a structured summary into the system prompt at session start.
+  const inherit_memory = raw.inherit_memory === true;
+
   // v0.4: roles list (string[]). Supports several spellings:
   //   roles:
   //     - planner
@@ -591,6 +596,7 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     authorized_costs,
     ...(workdir ? { workdir } : {}),
     ...(mcp_servers ? { mcp_servers } : {}),
+    ...(inherit_memory ? { inherit_memory } : {}),
     ...(roles ? { roles } : {}),
     ...(role_adapters ? { role_adapters: normalizeRoleAdapters(role_adapters) } : {}),
     ...(budgets ? { budgets } : {}),
