@@ -67,6 +67,20 @@ npx @pythonluvr/openwar validate examples/multi-agent-brief.md
   <em>Phase 0 in one image. What are you shipping today, ops?</em>
 </p>
 
+## Quick start with a local CLI agent
+
+If you already have Claude Code, Codex CLI, Gemini CLI, aider, or any other agent CLI on your machine, OpenWar can drive it. No cloud key, no extra subscription, the CLI uses whatever auth it already has.
+
+```bash
+npx @pythonluvr/openwar run examples/cli-bridge-brief.md \
+  --adapter cli-bridge \
+  --cli-binary claude
+```
+
+OpenWar spawns the binary, pipes the prompt in via stdin, applies the phase machine to its output. Same CLI agent you use today, now operating-disciplined. The brief needs `shell_exec` in `authorized_costs` because every cli-bridge invocation shells out a child process.
+
+Swap `claude` for `gemini`, `codex`, or any other binary on PATH. See [docs/adapters.md](./docs/adapters.md) for the full cli-bridge config.
+
 ## Quick start with a cloud key
 
 ```bash
@@ -81,7 +95,7 @@ export ANTHROPIC_API_KEY=...
 openwar run examples/engineering-brief.md
 ```
 
-Available adapters: `anthropic`, `openai`, `gemini`, `grok`, `openai-compat`, `cli-bridge`. Full adapter details + env vars in [docs/adapters.md](./docs/adapters.md).
+Available adapters: `anthropic`, `openai`, `gemini`, `grok`, `openai-compat`. Full adapter details + env vars in [docs/adapters.md](./docs/adapters.md).
 
 ## What the runtime enforces
 
