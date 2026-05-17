@@ -25,8 +25,9 @@ export interface CliBridgeMcpSetup {
   // Path to the per-session JSONL log of MCP-mediated tool calls. Replayed
   // into the transcript at session end.
   toolLogPath: string;
-  // Path to the temp MCP config file passed to the bridged CLI. Cleaned up
-  // on session end.
+  // Path to the MCP config file passed to the bridged CLI. May be a temp
+  // path (Claude Code, fallback) or a CLI-known location (Gemini CLI's
+  // .gemini/settings.json under the workdir).
   configPath: string;
   // Display name from the registry (or "unknown") for diagnostics.
   bridgedCliName: string;
@@ -34,6 +35,10 @@ export interface CliBridgeMcpSetup {
   // operator's binary triggered the fallback (config written but CLI args
   // not injected, with a startup warning).
   known: boolean;
+  // Whether to delete the config file at session end. True for temp paths;
+  // false when the strategy wrote to a CLI-known location the operator
+  // expects to persist (e.g. Gemini's .gemini/settings.json).
+  cleanupConfigFile: boolean;
 }
 
 export interface SetupOptions {
@@ -83,7 +88,13 @@ export async function setupCliBridgeMcpForwarding(
   const strategy = resolveBridgedCliStrategy(binary);
 
   const toolLogPath = defaultToolLogPath(opts.briefId);
-  const configPath = defaultConfigPath(opts.briefId);
+  const defaultCfg = defaultConfigPath(opts.briefId);
+  // v0.7.0 (Gemini): the strategy may override where to write the config
+  // file. Default keeps the temp-file behavior Claude Code expects.
+  const configPath = strategy.configPath
+    ? strategy.configPath({ workdir: opts.workdir, briefId: opts.briefId, defaultTmpPath: defaultCfg })
+    : defaultCfg;
+  const cleanupConfigFile = strategy.cleanupConfigFile !== false;
 
   // Compose the MCP server invocation. The bridged CLI will spawn this
   // command via its MCP config and talk JSON-RPC to it on stdio.
@@ -131,6 +142,7 @@ export async function setupCliBridgeMcpForwarding(
     configPath,
     bridgedCliName: strategy.display_name,
     known: strategy.mcp_supported,
+    cleanupConfigFile,
   };
 }
 
@@ -177,5 +189,10 @@ export async function replayMcpToolLog(
     }
   }
   try { await unlink(setup.toolLogPath); } catch { /* swallow */ }
+  // v0.7.0 Gemini: skip config file cleanup when the strategy wrote to a
+  // CLI-known location (the operator wants the wiring sticky for next runs).
+  if (setup.cleanupConfigFile) {
+    try { await unlink(setup.configPath); } catch { /* swallow */ }
+  }
   return out;
 }

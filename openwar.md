@@ -406,7 +406,7 @@ When a brief uses the cli-bridge adapter to delegate to a CLI agent (Claude Code
 ### How it wires up
 
 1. The runner detects cli-bridge + the brief's `cli.mcp_forward` is not `false` (default `true`).
-2. The bridged binary is looked up in the registry. Claude Code maps to `--mcp-config <path>` injection. Unknown binaries fall back to writing the config file but not injecting CLI args, with a startup warning.
+2. The bridged binary is looked up in the registry. Claude Code maps to a temp JSON config + `--mcp-config <path>` flag injection. Gemini CLI writes the same config to a workdir-local `.gemini/settings.json` (Gemini auto-discovers; no flag needed; file persists across runs). Unknown binaries (Codex, aider, custom binaries) fall back to writing the temp config file but not injecting CLI args, with a startup warning. Codex specifically lands in v0.7.1+ when TOML config support is in scope.
 3. A temp JSON config file is written pointing at `node bin/openwar mcp-serve --workdir <wd> --authorized-costs <list> ...`.
 4. The bridged CLI spawns the `openwar mcp-serve` child process per the MCP config. That child IS the MCP server.
 5. Every tool call the bridged CLI issues against the `openwar:*` namespace round-trips through OpenWar's auth gate and existing native tool executors.
@@ -435,7 +435,8 @@ The runner falls back to v0.6 stdout-only cli-bridge: the bridged CLI sees only 
 
 ### What's NOT in v0.7.0
 
-- Codex / aider registry entries (v0.7.1+).
+- Codex registry entry. Codex reads MCP config from `~/.codex/config.toml`; shipping that requires a TOML serializer. Deferred to v0.7.1+.
+- Aider registry entry. Aider has no native MCP support today; it stays on the unknown-fallback path.
 - Live transcript update for MCP-mediated calls (current capture is via the per-session JSONL log replayed at run end; live update belongs to v0.8 observability).
 - Cross-CLI tool name translation. v0.7 ships against the MCP standard with the `openwar:` namespace prefix.
 - Per-role MCP config injection. One MCP server per session.

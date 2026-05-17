@@ -61,10 +61,13 @@ A completion report that:
 
 ## Tools required
 
-- `claude` on PATH (npm i -g @anthropic-ai/claude-code installs as `claude.cmd`
-  on Windows; v0.6.2's PATHEXT fix resolves it as just `claude`).
-- ANTHROPIC_API_KEY in the env for any non-cli-bridge role (none in this
-  single-adapter brief).
+- A registered bridged CLI on PATH. v0.7.0 registry: `claude` (Claude Code,
+  --mcp-config flag injection) or `gemini` (Gemini CLI, auto-discovers from
+  `<workdir>/.gemini/settings.json` which OpenWar writes). Either works
+  drop-in. Both install via npm; the v0.6.2 PATHEXT fix resolves them by
+  basename on Windows.
+- ANTHROPIC_API_KEY (or the relevant cloud key) in the env for any
+  non-cli-bridge role. None in this single-adapter brief.
 
 ## Notes / unknowns
 
@@ -76,6 +79,19 @@ npx @pythonluvr/openwar run examples/cli-bridge-mcp-memory-brief.md \
   --cli-binary claude \
   --mode auto
 ```
+
+Or against Gemini CLI (the v0.7.0 second-registered bridged CLI):
+
+```bash
+npx @pythonluvr/openwar run examples/cli-bridge-mcp-memory-brief.md \
+  --adapter cli-bridge \
+  --cli-binary gemini \
+  --mode auto
+```
+
+Gemini auto-discovers OpenWar's MCP server from the workdir-local
+`.gemini/settings.json` that the runner writes. The file is intentionally
+left in place after the run so subsequent runs do not have to re-wire.
 
 Inspect the captured MCP-mediated tool calls in the transcript:
 
