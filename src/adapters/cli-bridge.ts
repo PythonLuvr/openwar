@@ -138,13 +138,25 @@ export class CliBridgeAdapter implements AgentAdapter {
     const argv = [...this.options.args];
     const env = { ...process.env, ...(this.options.env ?? {}) };
 
-    // v0.6.1: Windows needs `shell: true` to spawn .cmd / .bat shims (every
-    // npm-installed CLI lands as a .cmd on Windows). Unconditionally setting
-    // shell: true breaks any binary whose path contains a space (the shell
-    // re-parses argv and mishandles quoting), so this is scoped to the
-    // extensions that actually need it. POSIX runs keep shell: false.
+    // v0.6.2: Windows needs `shell: true` in two cases.
+    //
+    //   1. The binary explicitly ends in .cmd or .bat. Node's child_process
+    //      cannot spawn those without a shell on Windows (documented).
+    //   2. The binary has no extension at all (e.g. `--cli-binary claude`).
+    //      That's the natural shape operators type to match the binary's
+    //      name on PATH. Without shell mode, Windows CreateProcess does not
+    //      walk PATHEXT, so npm-installed CLIs (which land as .cmd shims)
+    //      fail with ENOENT. Shell mode lets cmd.exe do the PATHEXT walk.
+    //
+    // We do NOT unconditionally enable shell on Windows because the shell
+    // re-parses argv and mangles any binary path containing a space
+    // (the `C:\Program Files\nodejs\node.exe` case). Direct executables
+    // with an extension (.exe, .com) keep shell: false; CreateProcess
+    // handles them fine even when the path has spaces. POSIX is unaffected.
     const needsShell =
-      process.platform === "win32" && /\.(cmd|bat)$/i.test(this.options.binary);
+      process.platform === "win32" &&
+      (/\.(cmd|bat)$/i.test(this.options.binary) ||
+        !/\.[^./\\]+$/.test(this.options.binary));
     const child = spawn(this.options.binary, argv, {
       cwd: this.options.working_dir,
       env: env as NodeJS.ProcessEnv,

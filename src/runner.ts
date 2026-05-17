@@ -149,6 +149,26 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     io.write(lines.join("\n") + "\n");
   }
 
+  // v0.6.2: surface the bridged-CLI permission interaction at run start too,
+  // not just at `openwar validate` time. The brief validator catches it for
+  // briefs that pin cli-bridge per-role; the runtime catches the top-level
+  // case (`--adapter cli-bridge`) where the brief itself doesn't know.
+  if (usesCliBridgeAnywhere) {
+    const sideEffectAuthed = brief.frontmatter.authorized_costs.some((c) =>
+      ["filesystem_write", "filesystem_delete", "shell_exec", "http_fetch", "git_write", "git_push", "deploy", "external_message", "paid_api_call", "*"].includes(c),
+    );
+    if (sideEffectAuthed) {
+      io.warn(
+        "cli-bridge in use with side-effecting authorized_costs. The bridged CLI " +
+          "runs as its own subprocess with its own permission system (Claude Code's " +
+          "permissions, etc); OpenWar's authorized_costs apply to OpenWar tool calls only. " +
+          "If the bridged agent declares Phase 2 on a write the brief authorized, the cause " +
+          "is the CLI's own permission layer rejecting it. Pre-authorize the brief's paths " +
+          "in the bridged CLI's permission settings to avoid this.",
+      );
+    }
+  }
+
   if (usesCliBridgeAnywhere && !hasShellExec) {
     io.write(
       "\nopenwar: cli-bridge requires `shell_exec` in the brief's authorized_costs.\n" +

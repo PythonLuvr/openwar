@@ -150,6 +150,44 @@ export function validateBrief(brief: Brief, options: ValidateBriefOptions = {}):
     }
   }
 
+  // v0.6.2: surface the cli-bridge / bridged-CLI permission interaction as a
+  // brief-lint warning. When any role is pinned to cli-bridge AND the brief
+  // authorizes non-trivial side effects, the bridged CLI's own permission
+  // system (Claude Code's permissions, etc) sits on top of OpenWar's gates.
+  // The two layers don't talk; an operator who pre-approved filesystem_write
+  // in the brief may still see the bridged agent declare Phase 2 because the
+  // CLI rejected the write under its own rules. Warning, not an error.
+  const sideEffectCategories = new Set([
+    "filesystem_write",
+    "filesystem_delete",
+    "shell_exec",
+    "http_fetch",
+    "git_write",
+    "git_push",
+    "deploy",
+    "external_message",
+    "paid_api_call",
+  ]);
+  const briefUsesCliBridge =
+    !!fm.role_adapters &&
+    Object.values(fm.role_adapters).some((cfg) => cfg.adapter === "cli-bridge");
+  const briefAuthorsSideEffects = fm.authorized_costs.some(
+    (c) => sideEffectCategories.has(c) || c === "*",
+  );
+  if (briefUsesCliBridge && briefAuthorsSideEffects) {
+    issues.push({
+      field: "role_adapters",
+      message:
+        "cli-bridge is in play and the brief authorizes side-effecting categories. " +
+        "OpenWar's authorized_costs apply to OpenWar tool calls, but the bridged CLI runs " +
+        "as its own subprocess with its own permission system. For Claude Code: pre-authorize " +
+        "the brief's filesystem paths in your Claude Code permissions, or the bridged agent " +
+        "may declare Phase 2 mid-run when its own permissions reject writes the OpenWar brief " +
+        "authorized.",
+      severity: "warning",
+    });
+  }
+
   // v0.5.1: role_adapters validation. Every key must reference a role in
   // `roles`, every adapter id must be in the known set, and any role pinned to
   // cli-bridge requires `shell_exec` in the brief's authorized_costs.

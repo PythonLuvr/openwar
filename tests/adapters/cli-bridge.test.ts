@@ -90,8 +90,14 @@ test("cli-bridge: spawn failure (binary missing) surfaces as error event", async
     adapter.sendMessage({ system: "", messages: [{ role: "user", content: "x", at: "" }] }),
   );
   const err = events.find((e) => e.type === "error") as { error: Error } | undefined;
-  assert.ok(err, "expected a spawn error");
-  assert.match(err.error.message, /spawn failed/);
+  assert.ok(err, "expected an error event");
+  // POSIX (and Windows with an extensioned binary) hits the ENOENT spawn-error
+  // path and surfaces as "spawn failed". Windows with an extensionless binary
+  // (v0.6.2's PATHEXT-via-shell path) instead fails through cmd.exe with a
+  // non-zero exit code; the error message reports the exit code and the
+  // shell's stderr. Both paths surface a clear "the binary isn't there"
+  // message to the operator, which is the behaviour the test pins.
+  assert.match(err.error.message, /spawn failed|exit code|not recognized|not found/i);
 });
 
 test("cli-bridge: framework_prefix true (default) puts system prompt into stdin", async () => {

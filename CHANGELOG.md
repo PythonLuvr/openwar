@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.2
+
+Two follow-ups against real Windows testing of v0.6 memory through cli-bridge. Together they complete the Windows operator experience and surface the cli-bridge / bridged-CLI permission interaction at lint time so operators see it before a mid-run halt.
+
+### Fixed
+
+- **cli-bridge: spawn extensionless binaries on Windows.** The v0.6.1 fix enabled shell mode only for explicit `.cmd` / `.bat` paths. Operators typing the natural `--cli-binary claude` form (matching the binary's name on PATH) still hit `spawn claude ENOENT` because Windows `CreateProcess` does not walk `PATHEXT`. The `needsShell` predicate now also fires when the binary has no extension on Windows; shell mode then lets `cmd.exe` do the `PATHEXT` walk. Direct executables with `.exe` / `.com` extensions keep `shell: false` (no quoting regressions). POSIX behavior unchanged.
+
+### Added
+
+- **Brief-validator warning when cli-bridge meets side-effecting authorization.** When a brief pins any role to `cli-bridge` AND authorizes any side-effecting category (`filesystem_write`, `filesystem_delete`, `shell_exec`, `http_fetch`, `git_write`, `git_push`, `deploy`, `external_message`, `paid_api_call`, or wildcard `*`), `openwar validate` now emits an informational warning. The warning explains that OpenWar's `authorized_costs` apply to OpenWar's own tool calls; the bridged CLI runs as its own subprocess with its own permission layer (Claude Code's permissions, etc) which sits on top. Operators who don't pre-authorize the brief's paths in the bridged CLI may see the bridged agent declare Phase 2 mid-run when the CLI's own permissions reject a write the OpenWar brief authorized. Warning, not an error; the operator may still want to run the brief.
+- **Runtime banner mirror at run start** for the same warning, scoped to the top-level `--adapter cli-bridge` case where the brief itself doesn't declare cli-bridge per-role. Fires through `io.warn` before Phase 0 so the operator sees it alongside the existing tier preview.
+- **`tests/adapters/cli-bridge-windows-cmd.test.ts`** gains a `PATHEXT` regression case. Prepends a temp directory containing `hello.cmd` to PATH, spawns `hello` (no extension) via the adapter, asserts a clean `done` event. Skips cleanly on non-Windows so CI on Ubuntu and macOS stays green.
+- **`tests/brief-cli-bridge-warning.test.ts`** covers five cases: warning fires on `filesystem_write` + cli-bridge, warning fires on `shell_exec` + cli-bridge, no warning when the only auth is `filesystem_read` and no cli-bridge is in play, no warning when adapter is not cli-bridge even with write auth, warning fires on wildcard `authorized_costs` + cli-bridge.
+
+### Known follow-up (not in 0.6.2)
+
+- **MCP-server-mode for native tool forwarding through cli-bridge.** Today the bridged CLI cannot call OpenWar's native tools (`read_project_memory`, `write_project_memory`, the six filesystem/shell/http tools, MCP tools) because its tool registry is its own. This is the v0.5 explicit non-goal; the canonical fix is for OpenWar to expose its native tools as an MCP server and the bridged CLI to consume them via MCP. OpenWar already implements the MCP client side in `src/mcp/`; adding the server side reuses the same JSON-RPC primitives. Estimated 1-2 weeks of builder work. Likely lands as v0.7 (potentially reordering the observability roadmap slot to v0.8) once Phase 0 design lands. Decision deferred to the operator.
+
 ## 0.6.1
 
 Windows-only bug fix for cli-bridge. v0.5 and v0.6 hardcoded `shell: false` in the `child_process.spawn` call. Node's documentation calls out that `.cmd` and `.bat` files cannot be spawned without a shell on Windows, so every operator trying to bridge to an npm-installed CLI (Claude Code, Gemini CLI, aider, etc) hit `spawn <binary> ENOENT` even when the file existed on PATH. POSIX runs were unaffected because Unix binaries spawn fine without a shell.
