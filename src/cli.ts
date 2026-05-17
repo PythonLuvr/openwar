@@ -91,6 +91,9 @@ Usage:
   openwar memory list <project> [--category decisions|knowledge|constraints]
   openwar memory show <project> <entry_id>
   openwar memory remove <project> <entry_id>
+  openwar mcp-serve --workdir <path> --authorized-costs <list>
+                    [--project <slug>] [--brief-id <id>]
+                    [--tool-log-path <path>] [--no-shell]
   openwar version
   openwar --help
 
@@ -498,6 +501,32 @@ function mcpConfigPath(): string {
   return join(homedir(), ".openwar", "mcp.json");
 }
 
+// v0.7: MCP server subprocess for cli-bridge MCP-server-mode. Spawned by the
+// bridged CLI (Claude Code, etc) when the brief enables mcp_forward. Runs an
+// MCP server on stdin/stdout that exposes OpenWar's native tools with the
+// brief's authorized_costs as the auth gate. Logs every call to the JSONL
+// at --tool-log-path so the parent runtime folds them into the transcript.
+async function commandMcpServe(parsed: ParsedFlags): Promise<number> {
+  const { runOpenwarMcpServer } = await import("./mcp/openwar-server-runtime.js");
+  const workdir = typeof parsed.flags["workdir"] === "string" ? parsed.flags["workdir"] : process.cwd();
+  const authorizedCostsRaw = typeof parsed.flags["authorized-costs"] === "string" ? parsed.flags["authorized-costs"] : "";
+  const authorizedCosts = authorizedCostsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+  const project = typeof parsed.flags["project"] === "string" ? parsed.flags["project"] : undefined;
+  const briefId = typeof parsed.flags["brief-id"] === "string" ? parsed.flags["brief-id"] : undefined;
+  const toolLogPath = typeof parsed.flags["tool-log-path"] === "string" ? parsed.flags["tool-log-path"] : undefined;
+  const shellEnabled = parsed.flags["no-shell"] !== true;
+  const server = await runOpenwarMcpServer({
+    workdir,
+    authorizedCosts,
+    shellEnabled,
+    ...(project && { project_slug: project }),
+    ...(briefId && { brief_id: briefId }),
+    ...(toolLogPath && { toolLogPath }),
+  });
+  await server.closed;
+  return 0;
+}
+
 // v0.6: out-of-session inspection and pruning of per-project memory.
 async function commandMemory(parsed: ParsedFlags): Promise<number> {
   const { readMemory, removeMemoryEntry, MEMORY_CATEGORIES } =
@@ -697,6 +726,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return await commandPlan(parsed);
     case "memory":
       return await commandMemory(parsed);
+    case "mcp-serve":
+      return await commandMcpServe(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;

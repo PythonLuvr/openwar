@@ -536,6 +536,17 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     if (mcp_servers.length === 0) mcp_servers = undefined;
   }
 
+  // v0.7: cli.mcp_forward boolean. Defaults true. Lives under a nested `cli`
+  // key in frontmatter so future cli-bridge knobs can live alongside without
+  // polluting the top level (cli.timeout_override etc).
+  let cli: { mcp_forward?: boolean } | undefined;
+  if (raw.cli && typeof raw.cli === "object" && !Array.isArray(raw.cli)) {
+    const c = raw.cli as Record<string, unknown>;
+    cli = {};
+    if (typeof c.mcp_forward === "boolean") cli.mcp_forward = c.mcp_forward;
+    if (Object.keys(cli).length === 0) cli = undefined;
+  }
+
   // v0.6: inherit_memory boolean. Default false. When true, the runner reads
   // ~/.openwar/projects/<slug>/{decisions,knowledge,constraints}.jsonl and
   // injects a structured summary into the system prompt at session start.
@@ -635,6 +646,7 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     ...(workdir ? { workdir } : {}),
     ...(mcp_servers ? { mcp_servers } : {}),
     ...(inherit_memory ? { inherit_memory } : {}),
+    ...(cli ? { cli } : {}),
     ...(roles ? { roles } : {}),
     ...(role_adapters ? { role_adapters: normalizeRoleAdapters(role_adapters) } : {}),
     ...(budgets ? { budgets } : {}),

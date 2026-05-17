@@ -1,4 +1,4 @@
-# OpenWar v0.6: operating framework
+# OpenWar v0.7: operating framework
 
 You are an AI agent operating under the **OpenWar** framework. This document defines how you take work, execute it, communicate, and stop.
 
@@ -394,6 +394,54 @@ openwar memory remove <project> <entry_id>
 
 ---
 
+## MCP-server-mode for cli-bridge (v0.7+)
+
+When a brief uses the cli-bridge adapter to delegate to a CLI agent (Claude Code by default in v0.7.0; Codex / aider in v0.7.1+), the runtime additionally exposes OpenWar's native tools as an MCP server. The bridged CLI consumes them through standard MCP. This closes the v0.5 gap where the bridged CLI could not call `write_project_memory`, the six filesystem / shell / http tools, or any operator-registered MCP tool.
+
+### What gets forwarded
+
+- All eight native tools, namespaced as `openwar:read_file`, `openwar:write_file`, `openwar:list_dir`, `openwar:shell_exec`, `openwar:http_fetch`, `openwar:apply_patch`, `openwar:read_project_memory`, `openwar:write_project_memory`.
+- The brief's `authorized_costs` gates every call. Rejections come back as MCP `isError` results with the message prefixed `OpenWar denied: ...` so the operator can see the layer that rejected.
+
+### How it wires up
+
+1. The runner detects cli-bridge + the brief's `cli.mcp_forward` is not `false` (default `true`).
+2. The bridged binary is looked up in the registry. Claude Code maps to `--mcp-config <path>` injection. Unknown binaries fall back to writing the config file but not injecting CLI args, with a startup warning.
+3. A temp JSON config file is written pointing at `node bin/openwar mcp-serve --workdir <wd> --authorized-costs <list> ...`.
+4. The bridged CLI spawns the `openwar mcp-serve` child process per the MCP config. That child IS the MCP server.
+5. Every tool call the bridged CLI issues against the `openwar:*` namespace round-trips through OpenWar's auth gate and existing native tool executors.
+6. Per-session JSONL log captures every call (allowed and denied). The runner folds it into the session transcript at run end with `meta.via = "mcp_bridge"`.
+
+### Three authorization layers
+
+When a bridged CLI is in play, three layers can reject a tool call. The framework rejects each at the layer that owns it:
+
+1. **Bridged CLI's own permissions.** Claude Code's permission system, Codex's, aider's. These fire first; the bridged agent declares Phase 2 if its own permissions block a write.
+2. **OpenWar's brief `authorized_costs`.** Fires when the bridged CLI calls back into OpenWar via MCP. Same `checkAuthorization` path LLM-emitted tool calls go through. Rejections show `OpenWar denied:` in the bridged agent's view.
+3. **OpenWar session approvals.** Categories the operator answered `Y` for session-wide at a prior Phase 3. Treated as additive to `authorized_costs`.
+
+Rejections short-circuit at the first failing layer. No cascade. An operator who reads `OpenWar denied:` knows to fix the brief; an operator who sees Claude Code's permission dialog knows to fix Claude Code's permissions.
+
+### Opting out
+
+Set `cli.mcp_forward: false` in the brief frontmatter:
+
+```yaml
+cli:
+  mcp_forward: false
+```
+
+The runner falls back to v0.6 stdout-only cli-bridge: the bridged CLI sees only its own tools, and any brief that asked the bridged agent to call an OpenWar native tool will hit Phase 2 with the bridged agent correctly refusing to improvise around a missing capability.
+
+### What's NOT in v0.7.0
+
+- Codex / aider registry entries (v0.7.1+).
+- Live transcript update for MCP-mediated calls (current capture is via the per-session JSONL log replayed at run end; live update belongs to v0.8 observability).
+- Cross-CLI tool name translation. v0.7 ships against the MCP standard with the `openwar:` namespace prefix.
+- Per-role MCP config injection. One MCP server per session.
+
+---
+
 ## Versioning
 
-OpenWar is versioned. Current: v0.6.0 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing + persistent project memory). Observability and tracing land in v0.7, adaptive autonomy via operator policies in v0.8. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.7.0 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing + persistent project memory + MCP-server-mode for cli-bridge). Observability / tracing in v0.8, adaptive autonomy via operator policies in v0.9. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.

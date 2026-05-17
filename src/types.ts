@@ -23,6 +23,15 @@ export interface BriefFrontmatter {
   // the system prompt at session start, capped at 20 entries per category.
   // Default false to keep existing briefs token-cost-neutral.
   inherit_memory?: boolean;
+  // v0.7: cli-bridge MCP-server-mode toggles. When the brief uses the
+  // cli-bridge adapter, the runtime spawns an `openwar mcp-serve` child
+  // alongside the bridged CLI so the CLI can call OpenWar's native tools
+  // (read_project_memory, write_project_memory, the six filesystem /
+  // shell / http tools) via MCP. mcp_forward defaults true; operators set
+  // it false to fall back to v0.6 stdout-only cli-bridge.
+  cli?: {
+    mcp_forward?: boolean;
+  };
   // v0.4 additions. Optional; omitted = single-agent mode (v0.3 behavior).
   roles?: string[];
   // v0.5.1: per-role adapter overrides. Populated when the brief uses the

@@ -37,6 +37,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { MCPClient, StdioTransport, loadGlobalMcpConfig, splitCommand } from "./mcp/index.js";
 import { renderMemoryForRole } from "./roles/memory-visibility.js";
+import { setupCliBridgeMcpForwarding, replayMcpToolLog, type CliBridgeMcpSetup } from "./mcp/cli-bridge-wiring.js";
+import { CliBridgeAdapter } from "./adapters/cli-bridge.js";
 
 export async function run(opts: RunOptions): Promise<RunResult> {
   if (!opts.briefPath && !opts.briefSource) {
@@ -184,6 +186,23 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       halt_reason: "cli_bridge_requires_shell_exec",
       messages: session.messages,
     };
+  }
+
+  // ------------------- v0.7 cli-bridge MCP-server-mode wiring -------------------
+  // When the active adapter is cli-bridge AND the brief did not opt out via
+  // cli.mcp_forward: false, stand up an MCP config + tool log so the bridged
+  // CLI can call OpenWar's native tools. The setup is a no-op for non-
+  // cli-bridge runs and for opted-out briefs.
+  let mcpSetup: CliBridgeMcpSetup | null = null;
+  if (usesCliBridgeAtRoot && adapter instanceof CliBridgeAdapter) {
+    const workdirForMcp = opts.workdir ?? brief.frontmatter.workdir ?? process.cwd();
+    mcpSetup = await setupCliBridgeMcpForwarding({
+      brief,
+      adapter,
+      io,
+      workdir: workdirForMcp,
+      briefId: session.meta.brief_id,
+    });
   }
 
   // ------------------- Phase 0 -------------------
@@ -380,6 +399,8 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     transition(coordResult.completed ? "done" : "blocker", `coordinator final_state=${coordResult.final_state}`);
     persist();
     await cleanupMcp();
+    await foldMcpToolLog(mcpSetup, session);
+    persist();
     return {
       session_id: session.meta.brief_id,
       final_phase: coordResult.final_phase,
@@ -575,6 +596,8 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   transition("done", "completion report delivered");
   persist();
   await cleanupMcp();
+  await foldMcpToolLog(mcpSetup, session);
+  persist();
 
   return {
     session_id: session.meta.brief_id,
@@ -583,6 +606,18 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     halted: false,
     messages: session.messages,
   };
+}
+
+// v0.7: fold MCP-mediated tool calls from the per-session JSONL log into the
+// session's tool_calls record. Called once per run, after the bridged CLI's
+// last call. No-op when MCP forwarding wasn't enabled or when the log file
+// doesn't exist (e.g. the bridged CLI never called an OpenWar tool).
+async function foldMcpToolLog(setup: CliBridgeMcpSetup | null, session: SessionState): Promise<void> {
+  if (!setup || !setup.enabled) return;
+  const records = await replayMcpToolLog(setup);
+  if (records.length === 0) return;
+  const existing = session.meta.tool_calls ?? [];
+  session.meta.tool_calls = [...existing, ...records];
 }
 
 function createSession(brief: Brief, briefId: string): SessionState {

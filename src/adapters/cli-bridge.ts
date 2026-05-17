@@ -125,6 +125,16 @@ export class CliBridgeAdapter implements AgentAdapter {
     this.model = config.model ?? this.options.binary;
   }
 
+  // v0.7: runner-side hook to append args before the prompt. Used by the
+  // cli-bridge MCP-server-mode wiring to inject `--mcp-config <path>` (and
+  // future bridged-CLI registry entries' args) without having to know about
+  // them at AdapterConfig construction time. Appends to the existing args
+  // array; never mutates earlier entries.
+  addExtraArgs(args: string[]): void {
+    if (args.length === 0) return;
+    this.options.args = [...this.options.args, ...args];
+  }
+
   isConfigured(): boolean {
     // Adapter is "configured" if the binary string is set. Whether the
     // binary actually exists on PATH is verified at spawn time and surfaces

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.7.0
+
+MCP-server-mode for cli-bridge. v0.5.0's cli-bridge adapter let OpenWar coordinate a CLI agent (Claude Code, etc), but the bridged CLI could not call OpenWar's native tools because its tool registry was its own. v0.7 closes the gap: OpenWar exposes its native tools as an MCP server, the bridged CLI consumes them through standard MCP, and the runtime threads OpenWar's authorization gates across the bridge. Operators can now run a brief that asks the bridged Claude Code to call `write_project_memory` (or any of the eight native tools) and have it actually work.
+
+This reorders the v0.7 roadmap slot. Observability / tracing was originally scheduled for v0.7; per the cli-bridge follow-up brief's Option A, observability slides to v0.8 because the cli-bridge native-tool gap is the more-felt operator pain right now.
+
+### Added
+
+- **`src/mcp/server.ts`**: hand-rolled MCP server. Mirror of `MCPClient`: listens for JSON-RPC requests on a `Readable`, dispatches to a handler map, writes responses to a `Writable`. Handles `initialize`, `tools/list`, `tools/call`, and arbitrary custom methods. Newline-delimited UTF-8 JSON framing; same 5MB inbound buffer cap the client uses. JSON-RPC error codes: `RPC_ERR_OPENWAR_AUTH` and `RPC_ERR_OPENWAR_INTERNAL` (application-defined `-32000` / `-32001`) for OpenWar-originated errors, plus the standard parse / invalid-request / method-not-found / invalid-params / internal codes.
+- **`src/mcp/openwar-server-runtime.ts`**: wires every native tool (`read_file`, `write_file`, `list_dir`, `shell_exec`, `http_fetch`, `apply_patch`, `read_project_memory`, `write_project_memory`) into the MCP server with the `openwar:` namespace prefix. Every `tools/call` passes through the existing `checkAuthorization` gate against the brief's `authorized_costs`. Rejected calls return `isError: true` with the message **`OpenWar denied: <category> not in authorized_costs ...`** so the operator can see which layer rejected vs the bridged CLI's own permission errors. Every call (allowed and denied) is appended to a per-session JSONL log at `--tool-log-path` for transcript capture.
+- **`src/mcp/bridged-cli-registry.ts`**: per-bridged-CLI MCP config-injection strategy. v0.7.0 ships Claude Code only (`claude` / `claude.cmd` / `claude.exe` resolved by basename, case-insensitive, extension-stripped). Unknown binaries get the fallback: the temp MCP config file is still written, but no CLI args are injected and the runtime emits a startup warning so the operator can wire MCP manually or set `cli.mcp_forward: false`. Codex and aider entries land in v0.7.1+.
+- **`src/mcp/cli-bridge-wiring.ts`**: runner-side orchestration. When the active adapter is cli-bridge AND the brief did not opt out via `cli.mcp_forward: false`, the runner: writes a temp MCP config file pointing at `node bin/openwar mcp-serve --workdir <wd> --authorized-costs <list> ...`; resolves the bridged binary in the registry; injects the CLI-specific args (e.g. `--mcp-config <path>` for Claude Code) into the adapter via the new `addExtraArgs` method. At session end, the per-session tool log is read back and folded into the OpenWar transcript as `ToolCallRecord` entries with `meta.via = "mcp_bridge"` (and `meta.denied_by` when the rejection came from OpenWar's auth).
+- **`openwar mcp-serve` CLI subcommand**: the entry point a bridged CLI spawns as its MCP server. Reads workdir, authorized costs, project slug, brief id, and tool log path from CLI flags. Runs the OpenWar MCP server on stdin/stdout until the parent closes the pipe.
+- **`CliBridgeAdapter.addExtraArgs(args)`**: runner-side hook to append args before the prompt. Used by the MCP-server-mode wiring without widening `AdapterConfig`.
+- **Brief frontmatter `cli.mcp_forward: true|false`** (default `true`). Nested under a `cli` block so future cli-bridge knobs can live alongside. Opt-out path for operators who deliberately want the bridged CLI in its own tool sandbox.
+- **Tests**: `tests/mcp/server.test.ts` (9 cases covering initialize / tools/list / tools/call dispatch / unknown method / invalid params / malformed JSON / notifications / generic throw / custom rpcError code), `tests/mcp/openwar-server-runtime.test.ts` (5 cases covering tools/list namespace, OpenWar-denied prefix, namespace enforcement, successful execution + JSONL log entry, denial log entry with `denied_by: "openwar"`), `tests/mcp/bridged-cli-registry.test.ts` (6 cases covering Claude Code resolution variants, fallback shape, args injection, listing, config file shape, custom server name).
+
+### Changed
+
+- The cli-bridge cost-tier preview banner is unchanged; the MCP-server-mode startup notice piggybacks on the existing `io.warn` path for fallback cases.
+- `openwar --help` lists `mcp-serve` under the CLI usage block.
+
+### Authorization split
+
+Per the v0.7 picks, OpenWar's MCP server rejects calls with `OpenWar denied: ...` messages. The bridged CLI's own permission layer rejects calls inside its own process and surfaces those rejections in its own way (Claude Code shows them in its UI). Operators reading either rejection message can tell which layer to fix without inspecting code.
+
+### Explicit non-goals (v0.7.0)
+
+- Custom MCP transport. Reuses the existing stdin/stdout framing primitives. No socket, no named pipe.
+- Auto-translation of tool names beyond the standard `openwar:<tool>` namespace prefix.
+- Cross-CLI tool incompatibility absorption. Aider, Codex, and other non-Claude-Code CLIs fall back to the registry's "unknown" path with a startup warning.
+- Per-role MCP config injection. The MCP config is per-session; every role on a cli-bridge run shares the same OpenWar tool surface.
+- Live transcript update of MCP-mediated calls. v0.7.0 captures via per-session JSONL log replayed at session end; live update is a v0.8 observability deliverable.
+
+### Notes for forkers and War Room integrators
+
+- Zero new runtime dependencies. The MCP server reuses the JSON-RPC framing from the existing client, the stdin/stdout streams are Node stdlib, and the bridged-cli registry is hand-rolled.
+- No state schema bump. MCP-mediated tool calls fold into the existing `SessionMeta.tool_calls` list with `meta.via = "mcp_bridge"` so older `openwar inspect` works unchanged; integrators that want to filter by origin can read the new meta field.
+- Backwards-compatible. Briefs without `cli.mcp_forward` default to enabling MCP forwarding, but only when the active adapter is cli-bridge. Non-cli-bridge runs are unaffected.
+- Operator-contributed registry entries are the v0.7.1 expansion path. The registry is a `Map<string, BridgedCliStrategy>` and accepts new entries with no schema bump.
+
 ## 0.6.2
 
 Two follow-ups against real Windows testing of v0.6 memory through cli-bridge. Together they complete the Windows operator experience and surface the cli-bridge / bridged-CLI permission interaction at lint time so operators see it before a mid-run halt.
