@@ -1,0 +1,122 @@
+# Adapters
+
+OpenWar abstracts the agent backend behind a small adapter interface. Each adapter takes a `SendMessageOptions` payload and yields `StreamEvent`s. You configure adapters with a `BYOK` (bring your own key) model: the runtime owns nothing on the provider side, just calls what you've already configured.
+
+## Built-in adapters
+
+| Adapter | Env var | Default model | Tier |
+|---|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | paid |
+| `openai` | `OPENAI_API_KEY` | `gpt-4o` | paid |
+| `gemini` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini-2.0-flash` | paid |
+| `grok` | `XAI_API_KEY` | `grok-2-latest` | paid |
+| `openai-compat` | `OPENAI_COMPAT_API_KEY` | (specify with `--base-url`) | paid (override to free for local) |
+| `cli-bridge` | (none, uses local CLI) | (specify with `--cli-binary`) | free |
+| `mock` | (none, deterministic) | `mock` | free |
+
+The runtime calls `isConfigured()` on the adapter at startup. API adapters with a missing key fail fast with a clear error.
+
+## openai-compat: local models via Ollama, vLLM, llama.cpp
+
+`openai-compat` covers any backend that speaks OpenAI's chat-completions protocol. That includes OpenRouter, Groq, Together, and local servers like Ollama and llama.cpp. Examples:
+
+**Ollama:**
+```bash
+npx @pythonluvr/openwar run brief.md \
+  --adapter openai-compat \
+  --base-url http://localhost:11434/v1 \
+  --model llama3.1
+```
+
+**vLLM / LM Studio / llama.cpp (local):**
+```bash
+npx @pythonluvr/openwar run brief.md \
+  --adapter openai-compat \
+  --base-url http://localhost:8000/v1 \
+  --model your-local-model-id
+```
+
+Local servers don't need an API key but the adapter still wants one set. Use any non-empty value:
+
+```bash
+export OPENAI_COMPAT_API_KEY=local
+```
+
+For local runs you'll also want to override the default `paid` tier so the cost banner doesn't lie:
+
+```bash
+# Brief frontmatter
+adapter_overrides:
+  openai-compat:
+    tier: free
+```
+
+## cli-bridge: treat a CLI binary as the agent (v0.5+)
+
+`cli-bridge` is the adapter that turns a local CLI agent (Claude Code, Codex CLI, Gemini CLI, aider, your own custom tool) into an OpenWar-coordinated executor. The runtime spawns the binary, pipes the prompt in via stdin, streams stdout as `text_delta` events, and applies the phase machine the same way it would against any LLM adapter.
+
+### Minimum invocation
+
+```bash
+npx @pythonluvr/openwar run examples/cli-bridge-brief.md \
+  --adapter cli-bridge \
+  --cli-binary claude
+```
+
+The brief must include `shell_exec` in `authorized_costs` because every cli-bridge invocation shells out a child process. The runtime halts pre-Phase-0 with a copy-pasteable frontmatter snippet if missing.
+
+### Full config (brief frontmatter)
+
+```yaml
+cli:
+  binary: claude
+  args: ["--print", "--output-format", "stream-json"]
+  timeout_ms: 600000           # default 10 min
+  framework_prefix: true        # prepend openwar.md to the prompt
+  tier: free                    # default; set to "paid" if your CLI bills
+```
+
+### When framework_prefix matters
+
+`framework_prefix: true` (default) prepends the contents of `openwar.md` to every prompt sent to the CLI. This makes non-OpenWar-aware CLIs behave like OpenWar-aware ones for the duration of the call. The cost is roughly 15 KB of tokens per invocation.
+
+Set `framework_prefix: false` (or pass `--cli-no-framework`) when the CLI already has OpenWar in its own system prompt. For Claude Code with `openwar.md` already in CLAUDE.md, the prepend is redundant and wasteful.
+
+### When to use cli-bridge vs an API adapter
+
+Use `cli-bridge` when:
+- Your CLI agent (Claude Code, aider, Codex) has its own MCP servers, session memory, or workdir conventions you want to preserve.
+- You're already paying for a CLI subscription and don't want to double-pay via API.
+- The task benefits from the CLI's built-in tool ecosystem (Claude Code's filesystem + bash + MCP integration, for example).
+
+Use an API adapter when:
+- You want OpenWar's native tools (`read_file`, `write_file`, `shell_exec`, etc) to handle execution directly.
+- You need the runtime's tighter sandbox guarantees over the CLI's looser ones.
+- One-shot stateless calls (no session state, no resume) are sufficient.
+
+See [multi-agent.md](./multi-agent.md) for mixing adapters across roles (planner on a cheap API, executor on a local CLI, reviewer on a third model).
+
+## Tier-aware cost preview
+
+Every adapter declares a tier (`free` or `paid`) used in the pre-Phase-0 cost banner. The banner fires before the operator confirms the run, so you see the cost shape before any LLM call.
+
+- **`free`**: local CLI subscription, local model, mock. No per-call billing.
+- **`paid`**: cloud API. May incur charges per the provider's pricing.
+
+Override the default via `extra.tier` in adapter config or `adapter_overrides.<id>.tier` in the brief frontmatter.
+
+## Adding a custom adapter
+
+OpenWar adapters implement a small interface. To plug in a custom backend (a private API gateway, a different CLI shape, an experimental model), implement:
+
+```ts
+interface AgentAdapter {
+  readonly id: string;
+  readonly name: string;
+  readonly model: string;
+  isConfigured(): boolean;
+  sendMessage(opts: SendMessageOptions): AsyncIterable<StreamEvent>;
+}
+```
+
+See [library.md](./library.md) for the full type surface and an integration example.
