@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Brief, RunnerIO, ToolCallRecord } from "../types.js";
 import type { CliBridgeAdapter } from "../adapters/cli-bridge.js";
+import { Tracer, nullTracer } from "../state/trace.js";
 import { resolveBridgedCliStrategy, buildMcpConfigFile } from "./bridged-cli-registry.js";
 import { upsertTomlSection } from "./toml-writer.js";
 import {
@@ -72,6 +73,9 @@ export interface SetupOptions {
   // Override the openwar CLI binary path. Defaults to the bin shim of the
   // currently-running openwar package. Tests can override.
   openwarBin?: string;
+  // v0.8: structured tracer for MCP lifecycle + settings-merge events.
+  // Optional so existing callers (tests) work without changes.
+  tracer?: Tracer;
 }
 
 // The openwar CLI binary path. Resolves from the dist directory at runtime.
@@ -93,6 +97,7 @@ function defaultConfigPath(briefId: string): string {
 export async function setupCliBridgeMcpForwarding(
   opts: SetupOptions,
 ): Promise<CliBridgeMcpSetup | null> {
+  const tracer = opts.tracer ?? nullTracer();
   // Default true. Operator must explicitly opt out to disable.
   const forwardEnabled = opts.brief.frontmatter.cli?.mcp_forward !== false;
   if (!forwardEnabled) {
@@ -176,17 +181,38 @@ export async function setupCliBridgeMcpForwarding(
   const skipPermSetup = opts.brief.frontmatter.cli?.skip_permission_setup === true;
   if (isClaudeCode && !skipPermSetup) {
     const settingsPath = claudeSettingsPath();
+    tracer.emit({
+      type: "settings_merge_attempted",
+      binary: strategy.display_name,
+      settings_path: settingsPath,
+      at: new Date().toISOString(),
+    });
     try {
       const result = await mergeClaudeSettings(settingsPath, OPENWAR_MCP_TOOL_PATTERNS);
       const note = result.added.length === 0
         ? "all already authorized"
         : `added ${result.added.length} new grant${result.added.length === 1 ? "" : "s"}`;
+      tracer.emit({
+        type: "settings_merge_outcome",
+        outcome: "success",
+        details: note,
+        at: new Date().toISOString(),
+      });
       opts.io.banner(
         `Pre-authorized openwar MCP tools in Claude Code settings at ${result.path} (${note}). ` +
           `Existing operator settings preserved.`,
       );
     } catch (err) {
       if (err instanceof ClaudeSettingsMergeError) {
+        // Map ClaudeSettingsMergeError code to trace outcome code.
+        const outcome: "parse_error" | "read_error" | "write_error" =
+          err.code === "PARSE" ? "parse_error" : err.code === "READ" ? "read_error" : "write_error";
+        tracer.emit({
+          type: "settings_merge_outcome",
+          outcome,
+          details: err.message,
+          at: new Date().toISOString(),
+        });
         throw new CliBridgePermissionSetupError(err.code, err.path, err.message);
       }
       throw err;
@@ -203,6 +229,17 @@ export async function setupCliBridgeMcpForwarding(
     );
   }
 
+  // v0.8: server is configured and the bridged CLI will spawn it on first
+  // tool call. We emit "started" here rather than after first connect because
+  // the actual JSON-RPC handshake happens out-of-process; the operator-
+  // visible signal is "we set this up successfully."
+  tracer.emit({
+    type: "mcp_server_started",
+    transport: "stdio",
+    tool_count: OPENWAR_MCP_TOOL_PATTERNS.length,
+    at: new Date().toISOString(),
+  });
+
   return {
     enabled: true,
     toolLogPath,
@@ -216,8 +253,14 @@ export async function setupCliBridgeMcpForwarding(
 // Read the MCP server's tool log and fold each entry into the OpenWar
 // transcript as a ToolCallRecord. Idempotent; the log file is deleted after
 // successful replay so we don't double-count on resume.
+//
+// v0.8: when a tracer is provided, also synthesizes `mcp_call_dispatched` +
+// `mcp_call_completed` events for each record so `openwar inspect --mcp`
+// surfaces the full MCP call lifecycle. Real-time `mcp_call_pending`
+// emission requires subprocess-side tracing and is deferred to v0.8.x.
 export async function replayMcpToolLog(
   setup: CliBridgeMcpSetup,
+  tracer?: Tracer,
 ): Promise<ToolCallRecord[]> {
   if (!existsSync(setup.toolLogPath)) return [];
   const out: ToolCallRecord[] = [];
@@ -233,6 +276,7 @@ export async function replayMcpToolLog(
         authorized: boolean;
         auth_note?: string;
         denied_by?: string;
+        duration_ms?: number;
         result?: { success: boolean; content_preview: string };
       };
       out.push({
@@ -250,6 +294,31 @@ export async function replayMcpToolLog(
           },
         }),
       });
+      if (tracer) {
+        const summary = (() => {
+          try {
+            const s = JSON.stringify(parsed.arguments ?? {});
+            return s.length > 200 ? s.slice(0, 197) + "..." : s;
+          } catch {
+            return "(unserializable)";
+          }
+        })();
+        tracer.emit({
+          type: "mcp_call_dispatched",
+          call_id: parsed.call_id,
+          tool: parsed.name,
+          args_summary: summary,
+          at: parsed.at,
+        });
+        tracer.emit({
+          type: "mcp_call_completed",
+          call_id: parsed.call_id,
+          tool: parsed.name,
+          duration_ms: parsed.duration_ms ?? 0,
+          success: parsed.result?.success ?? parsed.authorized,
+          at: parsed.at,
+        });
+      }
     } catch {
       // Skip corrupted lines silently; transcript should not block on a
       // malformed row from a crashed bridged session.

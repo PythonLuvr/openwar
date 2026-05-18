@@ -30,6 +30,8 @@ import { runCompletion } from "./phases/completion.js";
 import { createTerminalIO } from "./io.js";
 import { writeSession, readSession } from "./state/persist.js";
 import { appendTranscript } from "./state/transcript.js";
+import { Tracer } from "./state/trace.js";
+import { runtimeVersion } from "./version.js";
 import { NATIVE_TOOLS } from "./tools/native/index.js";
 import { SandboxContext } from "./sandbox/types.js";
 import { loadHostAllowlist } from "./sandbox/host-allowlist.js";
@@ -104,15 +106,36 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     if (!opts.ephemeral) appendTranscript(session.meta.brief_id, m);
   };
 
+  // v0.8: structured trace event stream. Disabled on ephemeral runs so tests
+  // don't litter the sessions dir. The tracer survives header-write failures
+  // (no-op fallback) so an observability bug never breaks the run.
+  const tracer = new Tracer({
+    briefId: session.meta.brief_id,
+    enabled: !opts.ephemeral,
+    openwarVersion: runtimeVersion(),
+  });
+
+  // Per-phase entry timestamps so phase_exit events carry duration_ms. Map
+  // from phase name to enter epoch-ms. Phases can re-enter (e.g. execute
+  // after a Phase 3 prompt), so on re-enter we just overwrite.
+  const phaseEnterMs = new Map<Phase, number>();
+
   const transition = (to: Phase, reason: string) => {
-    const t: PhaseTransition = {
-      from: session.meta.phase,
-      to,
-      at: new Date().toISOString(),
-      reason,
-    };
+    const from = session.meta.phase;
+    const nowMs = Date.now();
+    const at = new Date(nowMs).toISOString();
+    const t: PhaseTransition = { from, to, at, reason };
     session.meta.phase = to;
     session.meta.transitions.push(t);
+    // Emit phase_exit for the prior phase (if we have its enter time) and
+    // phase_enter for the new one. "done" is the terminal phase; we still
+    // emit its enter event for symmetry and so replay sees end-of-run.
+    const enterMs = phaseEnterMs.get(from);
+    if (enterMs !== undefined) {
+      tracer.emit({ type: "phase_exit", phase: from, duration_ms: nowMs - enterMs, at });
+    }
+    phaseEnterMs.set(to, nowMs);
+    tracer.emit({ type: "phase_enter", phase: to, at });
   };
 
   // ------------------- Phase 0 cost-tier preview -------------------
@@ -203,6 +226,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
         io,
         workdir: workdirForMcp,
         briefId: session.meta.brief_id,
+        tracer,
       });
     } catch (err) {
       // v0.7.2: pre-spawn permission auto-setup failed. Halt cleanly into
@@ -356,6 +380,10 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   if (roleIds.length > 0) {
     const { runCoordinator, resolveBudgets } = await import("./coordinator/index.js");
     const budgets = { ...resolveBudgets(brief), ...(opts.runtimeBudgets ?? {}) };
+    // v0.8: index of the next coordinator event we haven't yet projected
+    // into the trace. Coordinator events are append-only, so a counter is
+    // enough to know what's new each onSnapshot tick.
+    let traceCoordCursor = 0;
     transition("execute", "intake accepted (multi-agent)");
     // v0.5.1: persist which adapter each role resolved to so `inspect` can
     // surface the run shape and resume rebuilds adapters from this map without
@@ -403,6 +431,35 @@ export async function run(opts: RunOptions): Promise<RunResult> {
         metaV3.cost.tokens_used = snap.cost.tokens_used;
         metaV3.cost.wall_clock_ms = snap.cost.wall_clock_ms;
         metaV3.cost.tool_calls_by_subtask = { ...snap.cost.tool_calls_by_subtask };
+        // v0.8: project any new coordinator events into the trace.
+        for (let i = traceCoordCursor; i < events.length; i++) {
+          const ev = events[i]!;
+          const at = ("at" in ev && typeof ev.at === "string") ? ev.at : new Date().toISOString();
+          if (ev.type === "state_enter") {
+            tracer.emit({ type: "coordinator_state", state: ev.state, at });
+          } else if (ev.type === "role_invoked") {
+            // role_invoke trace event needs token + duration data, which the
+            // coordinator event itself doesn't carry. We emit a minimal
+            // signal here; full token accounting lands when adapters
+            // forward usage reports (planned: same patch series).
+            tracer.emit({
+              type: "role_invoke",
+              role: ev.role,
+              tokens_in: 0,
+              tokens_out: 0,
+              tokens_source: "estimated",
+              duration_ms: 0,
+              at,
+            });
+          } else if (ev.type === "subtask_result") {
+            tracer.emit({ type: "subtask_status", subtask_id: ev.subtask_id, status: ev.status, at });
+          } else if (ev.type === "budget_warn") {
+            tracer.emit({ type: "budget_warn", metric: ev.metric, used: ev.used, limit: ev.limit, at });
+          } else if (ev.type === "budget_halt") {
+            tracer.emit({ type: "budget_halt", metric: ev.metric, used: ev.used, limit: ev.limit, at });
+          }
+        }
+        traceCoordCursor = events.length;
         persist();
       },
       onMessage: (m) => {
@@ -426,7 +483,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     transition(coordResult.completed ? "done" : "blocker", `coordinator final_state=${coordResult.final_state}`);
     persist();
     await cleanupMcp();
-    await foldMcpToolLog(mcpSetup, session);
+    await foldMcpToolLog(mcpSetup, session, tracer);
     persist();
     return {
       session_id: session.meta.brief_id,
@@ -452,6 +509,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     toolExecutors,
     sandbox,
     sessionApproved: session.meta.session_approved_categories ?? [],
+    tracer,
     onMessage: (m) => {
       recordMessage(m);
       persist();
@@ -482,6 +540,12 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       const approveOnce = reply === "y" || reply === "yes";
       const approveSession = reply === "Y";
       const approved = approveOnce || approveSession;
+      tracer.emit({
+        type: "auth_prompt",
+        categories: missing as string[],
+        response: approveSession ? "Y" : approveOnce ? "y" : "n",
+        at: new Date().toISOString(),
+      });
 
       session.meta.destructive_approvals.push({
         at: new Date().toISOString(),
@@ -557,6 +621,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       history: [...executeResult.history, followUp],
       toolDefinitions, toolExecutors, sandbox,
       sessionApproved: session.meta.session_approved_categories ?? [],
+      tracer,
       onMessage: (m) => { recordMessage(m); persist(); },
     });
   }
@@ -623,7 +688,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   transition("done", "completion report delivered");
   persist();
   await cleanupMcp();
-  await foldMcpToolLog(mcpSetup, session);
+  await foldMcpToolLog(mcpSetup, session, tracer);
   persist();
 
   return {
@@ -639,9 +704,20 @@ export async function run(opts: RunOptions): Promise<RunResult> {
 // session's tool_calls record. Called once per run, after the bridged CLI's
 // last call. No-op when MCP forwarding wasn't enabled or when the log file
 // doesn't exist (e.g. the bridged CLI never called an OpenWar tool).
-async function foldMcpToolLog(setup: CliBridgeMcpSetup | null, session: SessionState): Promise<void> {
+//
+// v0.8: the tracer arg receives synthesized mcp_call_dispatched +
+// mcp_call_completed events per log entry so `inspect --mcp` surfaces the
+// full lifecycle, and emits mcp_server_shutdown when this session ends.
+async function foldMcpToolLog(setup: CliBridgeMcpSetup | null, session: SessionState, tracer?: Tracer): Promise<void> {
   if (!setup || !setup.enabled) return;
-  const records = await replayMcpToolLog(setup);
+  const records = await replayMcpToolLog(setup, tracer);
+  if (tracer) {
+    tracer.emit({
+      type: "mcp_server_shutdown",
+      reason: "session_end",
+      at: new Date().toISOString(),
+    });
+  }
   if (records.length === 0) return;
   const existing = session.meta.tool_calls ?? [];
   session.meta.tool_calls = [...existing, ...records];

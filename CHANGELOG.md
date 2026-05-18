@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.8.0
+
+Observability and tracing. The first version that gives operators (and integrators like War Room) the structured data they need to actually understand what their agents are doing. Everything before v0.8 was about getting the runtime to behave correctly. v0.8 makes its behavior visible.
+
+This release was scoped against two real Windows live tests on 2026-05-17 and 2026-05-18 that surfaced five observability gaps: invisible MCP call lifecycle, ambiguous permission-layer source on failure, invisible MCP server liveness, invisible phase timing, silent settings-merge failure modes. Each is closed by a specific event type in the new trace stream.
+
+### Added
+
+- **Structured trace event stream** at `~/.openwar/sessions/<brief_id>.trace.ndjson`. One JSONL event per line, append-only, schema-versioned via a `trace_version` header event on the first line. 19 event types covering phase transitions, tool calls, auth decisions, detector fires, role invocations, budget thresholds, sub-task state, coordinator state, MCP server lifecycle (started, shutdown, dispatched, completed; `mcp_call_pending` type defined, real-time emission lands in v0.8.x), settings-merge attempts and outcomes, and errors.
+- **`openwar inspect` extensions**: `--trace`, `--trace --tail N`, `--trace --full`, `--timing`, `--cost`, `--cost --dollar-per-1k <rate>`, `--detectors`, `--tools`, `--mcp`. Each prints a focused table. The dashboard reuses the same formatters so column shape stays in sync between CLI and web view.
+- **`openwar replay <brief_id>` subcommand**. Re-runs recorded assistant turns through CURRENT detector code, emits `[replay]`-prefixed output, halts at Phase 2 markers in the transcript (same shape as the original run), exits 1 when current detectors disagree with the recorded trace (drift). Useful for detector-regression CI gates and for demonstrating runs without paying for compute.
+- **`openwar dashboard` subcommand**. Opt-in local HTTP dashboard, default port 8780, bound to the IPv4 literal `127.0.0.1` (avoids Windows IPv6 resolution surprises). Zero outbound network calls. Zero third-party dependencies. Vanilla HTML over a single CSS block. Per-session views for summary, timing, cost, detectors, tools, mcp, and the raw trace.
+- **`OPENWAR_SESSIONS_DIR` environment variable**. Overrides the default `<OPENWAR_HOME>/sessions` location wholesale. Lets integrators relocate the session store and gives tests a clean way to point at a tmpdir.
+- **`docs/observability.md`**. Operator guide. Event reference, inspect modes, replay semantics, dashboard, file layout.
+- **40 new tests** (`tests/state/trace.test.ts`, `tests/state/trace-seams.test.ts`, `tests/cli/inspect.test.ts`, `tests/cli/replay.test.ts`, `tests/dashboard/server.test.ts`). Total now 490 (was 450 at v0.7.3). Every event type has a round-trip case. Inspect formatters pin column shape. Dashboard verified to bind 127.0.0.1 only and make zero outbound network calls.
+
+### Design notes (Phase 0 deviations approved)
+
+- **NDJSON appends use `fs.appendFileSync` per event, not tmp+rename.** The original brief specced "same atomicity as the transcript (tmp+rename per append)." That conflated transcript atomicity (low-frequency message persistence) with trace atomicity (high-frequency event log). Right invariant is "any complete line is a complete event"; appendFileSync gives that and scales O(1) per event.
+- **`trace_version` header event** is the first line of every trace file. v0.9 will add fields; without a schema version marker, replay would silently misinterpret old traces.
+- **`call_id` threaded through `mcp_call_*` events.** Concurrent MCP calls would otherwise be uncorrelatable in the trace.
+- **Replay re-runs detectors against the recorded transcript.** Not playback of recorded detector results. Recorded trace is reference data for drift comparison, not the script. This is what makes replay useful for detector regression testing.
+- **Dashboard = inspect-as-HTML.** Single source of truth across the on-disk text view and the web view. Four renderers collapse to one; bug fixes land once.
+
+### Out of scope (per the brief)
+
+- Remote telemetry / cloud aggregation. Local-first.
+- OpenTelemetry adapter. v0.8.x stretch if real demand.
+- Real-time streaming dashboard. Files-on-demand. WebSocket live updates wait until at least v0.8.x.
+- Real-time `mcp_call_pending` emission. Requires subprocess-side tracing wired into `openwar mcp-serve`; the event type is defined so consumers can code against it now. Emission lands in v0.8.x.
+- Multi-user dashboard authentication. Single operator, localhost-bound.
+- Auto-pruning of old trace files. Operator manages disk usage manually.
+
+### Notes for forkers and War Room integrators
+
+- The trace file lives sibling to the transcript and session-state files. Existing v0.7.x sessions (no trace) inspect gracefully: `openwar inspect <id> --trace` prints a "no trace events; sessions written before v0.8 are transcript-only" notice and exits 0.
+- War Room integrators consuming the OpenWar library can `import { Tracer, readTrace } from "@pythonluvr/openwar"` and pump trace data into their own observability stack. OpenWar itself stays silent on the wire.
+
 ## 0.7.3
 
 Symmetric memory access tools. Last night's live test surfaced an asymmetry: `openwar:write_project_memory` worked through MCP forwarding, but in-namespace verification was not possible because the general-purpose `read_file` and `list_dir` tools are workdir-sandboxed, while the memory store lives at `~/.openwar/projects/<slug>/` (sibling to any workdir, by v0.6 design). The bridged agent that hit the wall did the right thing (declared Phase 2 instead of escaping the sandbox), but a brief that asks the agent to verify what was written had no clean path. v0.7.3 closes that with two memory-specific tools that have the same scoping as `write_project_memory`.

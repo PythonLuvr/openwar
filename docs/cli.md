@@ -17,6 +17,14 @@ openwar plan <brief.md>                     # planner dry-run; no execution
 openwar resume <brief_id>                   # auto-detects single-agent vs multi-agent
 openwar list
 openwar inspect <brief_id> [--transcript]
+openwar inspect <brief_id> --trace [--tail N | --full]   # v0.8 structured trace
+openwar inspect <brief_id> --timing                       # per-phase durations
+openwar inspect <brief_id> --cost [--dollar-per-1k <rate>]
+openwar inspect <brief_id> --detectors
+openwar inspect <brief_id> --tools
+openwar inspect <brief_id> --mcp
+openwar replay <brief_id>                                 # v0.8 LLM-free replay
+openwar dashboard [--port <n>]                            # v0.8 local web view
 openwar validate <brief.md>
 openwar roles                                # list registered roles
 openwar adapters
@@ -67,7 +75,36 @@ openwar inspect <brief_id>            # metadata only
 openwar inspect <brief_id> --transcript  # full back-and-forth
 ```
 
-`--ephemeral` skips persistence entirely. Used by tests, CI runs, and integrators that manage their own state.
+v0.8 adds focused inspect modes that read the structured trace stream alongside the transcript. See [observability.md](./observability.md) for the full event reference.
+
+```bash
+openwar inspect <brief_id> --trace            # raw events, last 100 by default
+openwar inspect <brief_id> --trace --full     # all events
+openwar inspect <brief_id> --trace --tail 50
+openwar inspect <brief_id> --timing           # per-phase durations
+openwar inspect <brief_id> --cost             # per-role tokens + duration
+openwar inspect <brief_id> --cost --dollar-per-1k 3.0
+openwar inspect <brief_id> --detectors        # detector fire counts
+openwar inspect <brief_id> --tools            # tool call table
+openwar inspect <brief_id> --mcp              # MCP + settings merge view
+```
+
+Replay a recorded run through current detector code (no LLM calls):
+
+```bash
+openwar replay <brief_id>
+```
+
+Optional local dashboard (opt-in; binds 127.0.0.1):
+
+```bash
+openwar dashboard            # default port 8780
+openwar dashboard --port 9090
+```
+
+`OPENWAR_SESSIONS_DIR` overrides the default sessions directory wholesale; useful for integrators who relocate the session store.
+
+`--ephemeral` on `openwar run` skips persistence entirely. Used by tests, CI runs, and integrators that manage their own state.
 
 ## MCP server management
 

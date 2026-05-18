@@ -40,3 +40,28 @@ export {
 } from "./state/index.js";
 
 export { createTerminalIO, createScriptedIO } from "./io.js";
+
+// v0.8: trace + inspect surface. Integrators (War Room) consume these to
+// render OpenWar runs in their own observability stacks. OpenWar itself
+// stays silent on the wire; integrators push trace data wherever they want.
+export {
+  Tracer,
+  nullTracer,
+  readTrace,
+  readTraceFromPath,
+  TRACE_SCHEMA_VERSION,
+  aggregatePhaseTimings,
+  aggregateRoleCost,
+  aggregateDetectorCounts,
+  type TraceEvent,
+  type TraceEventType,
+} from "./state/trace.js";
+export {
+  formatTrace,
+  formatTiming,
+  formatCost,
+  formatDetectors,
+  formatTools,
+  formatMcp,
+} from "./cli/inspect.js";
+export { runReplay, type ReplayOptions, type ReplayResult } from "./cli/replay.js";

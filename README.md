@@ -124,6 +124,7 @@ If the agent skips the Confirmation Summary, the runtime asks it to restate befo
 | Brief format (YAML schema + categories) | [`docs/brief-format.md`](./docs/brief-format.md) |
 | Adapters (Anthropic, OpenAI, Gemini, Grok, openai-compat, cli-bridge) | [`docs/adapters.md`](./docs/adapters.md) |
 | Native tools and MCP | [`docs/tools.md`](./docs/tools.md) |
+| Observability and tracing (v0.8+) | [`docs/observability.md`](./docs/observability.md) |
 | Multi-agent orchestration (roles, budgets, per-role adapter mixing) | [`docs/multi-agent.md`](./docs/multi-agent.md) |
 | Use OpenWar as a library (TypeScript) | [`docs/library.md`](./docs/library.md) |
 | System-prompt-only path (no install) | [`docs/system-prompt.md`](./docs/system-prompt.md) |
@@ -144,7 +145,7 @@ System prompts cost nothing to install and work with any agent. The runtime is h
 
 ## Versioning
 
-Current: **v0.7.3**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
+Current: **v0.8.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
 - v0.1: framework doc only (single markdown file).
 - v0.2: runtime, CLI, BYOK adapters.
@@ -152,8 +153,10 @@ Current: **v0.7.3**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 - v0.4: multi-agent orchestration. Planner / executor / reviewer / critic. Budgets. Resumable mid-state sessions.
 - v0.5: cli-bridge adapter. OpenWar coordinates CLI agents (Claude Code, Codex CLI, Gemini CLI, aider) the same way it coordinates LLM adapters.
 - v0.5.1: per-role adapter mixing. A single brief can pin each role to its own adapter and model.
-- v0.6 (planned): persistent project memory across briefs.
-- v0.7 (planned): observability dashboards and tracing.
+- v0.6: persistent project memory across briefs.
+- v0.7: cli-bridge MCP-server-mode (Claude Code, Gemini CLI, Codex CLI) + Claude Code permission auto-setup + symmetric memory tools.
+- v0.8: structured trace event stream, focused `openwar inspect` modes, `openwar replay` (no LLM calls), opt-in local dashboard.
+- v0.9 (planned): operator-policy-driven adaptive autonomy on top of v0.8 trace history.
 
 Drop-in upgrades preserve compatibility within a major version. Major bumps may rename phases or change the brief format.
 

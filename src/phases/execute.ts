@@ -14,6 +14,7 @@ import type { SandboxContext } from "../sandbox/types.js";
 import type { ToolExecutor } from "../tools/types.js";
 import { snapshot } from "../detectors/index.js";
 import { checkAuthorization } from "../auth/check.js";
+import { Tracer, nullTracer } from "../state/trace.js";
 
 export interface ExecuteOpts {
   brief: Brief;
@@ -35,6 +36,9 @@ export interface ExecuteOpts {
   sandbox?: SandboxContext;
   // Categories the operator approved session-wide at prior Phase 3 prompts.
   sessionApproved?: string[];
+  // v0.8: structured trace emitter. Optional so test callers and the
+  // coordinator's executor adapter can pass nullTracer().
+  tracer?: Tracer;
 }
 
 export interface ExecuteResult {
@@ -66,6 +70,7 @@ interface StreamCollectResult {
 
 export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
   const { brief, adapter, system, io, mode, signal, onMessage } = opts;
+  const tracer = opts.tracer ?? nullTracer();
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
   const maxToolRounds = opts.maxToolRoundsPerStep ?? DEFAULT_MAX_TOOL_ROUNDS_PER_STEP;
   const history = [...opts.history];
@@ -127,6 +132,16 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
           authorizedCosts: brief.frontmatter.authorized_costs,
           sessionApproved: opts.sessionApproved ?? [],
         });
+        tracer.emit({
+          type: "auth_check_fired",
+          layer: "openwar",
+          tool: call.name,
+          decision: decision.allowed ? "allow" : "deny",
+          reason: decision.allowed
+            ? `categories ok: ${decision.required_categories.join(", ") || "(none)"}`
+            : `missing: ${decision.missing_categories.join(", ")}`,
+          at: new Date().toISOString(),
+        });
         if (!decision.allowed) {
           return {
             history,
@@ -152,6 +167,15 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
           continue;
         }
         io.write(`\n→ ${call.name}(${JSON.stringify(call.arguments).slice(0, 120)})\n`);
+        tracer.emit({
+          type: "tool_call",
+          call_id: call.id,
+          name: call.name,
+          args: call.arguments,
+          auth_decision: "allow",
+          at: new Date().toISOString(),
+        });
+        const toolStartMs = Date.now();
         const result = await executor(call, opts.sandbox!);
         const round: ToolResultForRound = {
           call_id: call.id,
@@ -160,7 +184,16 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
         };
         priorToolResults.push(round);
         opts.onToolCall?.(call, round);
-        io.write(`  ↳ ${result.success ? "ok" : "error"} (${result.meta?.duration_ms ?? 0}ms)\n`);
+        const durationMs = result.meta?.duration_ms ?? Date.now() - toolStartMs;
+        tracer.emit({
+          type: "tool_result",
+          call_id: call.id,
+          success: result.success,
+          duration_ms: durationMs,
+          bytes: Buffer.byteLength(result.content ?? "", "utf8"),
+          at: new Date().toISOString(),
+        });
+        io.write(`  ↳ ${result.success ? "ok" : "error"} (${durationMs}ms)\n`);
       }
 
       // Persist the round in transcript history as assistant + tool messages.
@@ -196,6 +229,28 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
     const detectors = snapshot(stepText, {
       authorized_costs: brief.frontmatter.authorized_costs,
     });
+    // v0.8: emit detector_fired for each detector that returned a meaningful
+    // signal. Detectors that returned no signal (blocker.blocked=false etc.)
+    // don't produce events, keeping the trace focused on actionable fires.
+    const detectorAt = new Date().toISOString();
+    if (detectors.confirmation?.found) {
+      tracer.emit({ type: "detector_fired", detector: "confirmation", payload: detectors.confirmation, at: detectorAt });
+    }
+    if (detectors.blocker?.blocked) {
+      tracer.emit({ type: "detector_fired", detector: "blocker", payload: detectors.blocker, at: detectorAt });
+    }
+    if (detectors.destructive?.destructive) {
+      tracer.emit({ type: "detector_fired", detector: "destructive", payload: detectors.destructive, at: detectorAt });
+    }
+    if (detectors.banned_phrases && detectors.banned_phrases.count > 0) {
+      tracer.emit({ type: "detector_fired", detector: "banned_phrases", payload: detectors.banned_phrases, at: detectorAt });
+    }
+    if (detectors.phase_marker && detectors.phase_marker.declared.length > 0) {
+      tracer.emit({ type: "detector_fired", detector: "phase_marker", payload: detectors.phase_marker, at: detectorAt });
+    }
+    if (detectors.completion?.complete) {
+      tracer.emit({ type: "detector_fired", detector: "completion", payload: detectors.completion, at: detectorAt });
+    }
     const assistant: Message = {
       role: "assistant",
       content: stepText,

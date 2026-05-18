@@ -18,6 +18,11 @@ const TRACKED = [
   ["src/orchestration/", 85],
   ["src/roles/", 85],
   ["src/coordinator/", 85],
+  // v0.8 observability surfaces. Per the v0.8 brief constraint.
+  ["src/state/trace.ts", 85],
+  ["src/cli/inspect.ts", 85],
+  ["src/cli/replay.ts", 85],
+  ["src/dashboard/", 85],
 ];
 
 function findTests(dir, out = []) {

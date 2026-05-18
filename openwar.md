@@ -445,4 +445,8 @@ The runner falls back to v0.6 stdout-only cli-bridge: the bridged CLI sees only 
 
 ## Versioning
 
-OpenWar is versioned. Current: v0.7.0 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing + persistent project memory + MCP-server-mode for cli-bridge). Observability / tracing in v0.8, adaptive autonomy via operator policies in v0.9. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.8.0 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing + persistent project memory + MCP-server-mode for cli-bridge + structured trace event stream with focused inspect modes, replay, and local dashboard). Adaptive autonomy via operator policies in v0.9, built on v0.8 trace history. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+
+### Observability (v0.8+)
+
+The runtime emits a structured trace alongside the transcript at `~/.openwar/sessions/<brief_id>.trace.ndjson`. Events fire across the phase machine (enter/exit with durations), the authorization gate (every decision with layer + reason), the tool dispatch (call + result with byte and timing data), the detector pass (every fire), the MCP server lifecycle (started, shutdown, dispatched, completed), and the bridged-CLI settings-merge path (attempted, outcome). No remote telemetry; integrators consume the trace through `openwar inspect`, `openwar replay`, or the optional local dashboard. See [docs/observability.md](./docs/observability.md) for the full event reference.

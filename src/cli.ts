@@ -12,6 +12,9 @@ import { createTerminalIO, styles } from "./io.js";
 import type { AdapterConfig, ExecutionMode } from "./types.js";
 import { listNativeDefinitions } from "./tools/native/index.js";
 import { loadGlobalMcpConfig, splitCommand, MCPClient, StdioTransport } from "./mcp/index.js";
+import { readTrace } from "./state/trace.js";
+import * as inspect from "./cli/inspect.js";
+import { runReplay } from "./cli/replay.js";
 
 interface ParsedFlags {
   positional: string[];
@@ -79,6 +82,14 @@ Usage:
   openwar resume <brief_id>
   openwar list
   openwar inspect <brief_id> [--transcript]
+  openwar inspect <brief_id> --trace [--tail N | --full]
+  openwar inspect <brief_id> --timing
+  openwar inspect <brief_id> --cost [--dollar-per-1k <rate>]
+  openwar inspect <brief_id> --detectors
+  openwar inspect <brief_id> --tools
+  openwar inspect <brief_id> --mcp
+  openwar replay <brief_id>
+  openwar dashboard [--port <n>]
   openwar validate <brief.md>
   openwar plan <brief.md> [--adapter <id>] [--model <name>]
   openwar roles
@@ -296,6 +307,12 @@ function commandInspect(parsed: ParsedFlags): number {
     return 1;
   }
   const w = process.stdout.write.bind(process.stdout);
+
+  // v0.8: focused inspect modes. Each flag prints ONLY its view; only the
+  // bare `openwar inspect <id>` (no mode flag) prints the legacy summary.
+  const mode = resolveInspectMode(parsed.flags);
+  if (mode) return commandInspectMode(briefId, mode, parsed.flags);
+
   w(`Brief:      ${session.meta.brief_id}\n`);
   w(`Project:    ${session.meta.project}\n`);
   w(`Started:    ${session.meta.started_at}\n`);
@@ -319,10 +336,65 @@ function commandInspect(parsed: ParsedFlags): number {
       w(e.message.content.trim() + "\n");
     }
   } else {
-    w(`\nMessages: ${session.messages.length} (use --transcript to print full transcript)\n`);
+    w(`\nMessages: ${session.messages.length} (use --transcript to print full transcript, or --trace/--timing/--cost/--detectors/--tools/--mcp for v0.8 focused views)\n`);
   }
   return 0;
 }
+
+type InspectMode = "trace" | "timing" | "cost" | "detectors" | "tools" | "mcp";
+
+function resolveInspectMode(flags: Record<string, string | boolean>): InspectMode | null {
+  if (flags["trace"] === true) return "trace";
+  if (flags["timing"] === true) return "timing";
+  if (flags["cost"] === true) return "cost";
+  if (flags["detectors"] === true) return "detectors";
+  if (flags["tools"] === true) return "tools";
+  if (flags["mcp"] === true) return "mcp";
+  return null;
+}
+
+function commandInspectMode(briefId: string, mode: InspectMode, flags: Record<string, string | boolean>): number {
+  const w = process.stdout.write.bind(process.stdout);
+  const { events, empty, corrupted_lines } = readTrace(briefId);
+  if (empty) {
+    w(`No trace events for "${briefId}". Sessions written before v0.8 only have a transcript; run with the latest openwar to capture traces.\n`);
+    return 0;
+  }
+  if (corrupted_lines.length > 0) {
+    w(`(${corrupted_lines.length} corrupted trace line(s) skipped: ${corrupted_lines.join(", ")})\n`);
+  }
+  switch (mode) {
+    case "trace": {
+      const tail = typeof flags["tail"] === "string" ? Number(flags["tail"]) : undefined;
+      const full = flags["full"] === true;
+      const traceOpts: Parameters<typeof inspect.formatTrace>[1] = {};
+      if (typeof tail === "number" && Number.isFinite(tail)) traceOpts.tail = tail;
+      if (full) traceOpts.full = true;
+      w(inspect.formatTrace(events, traceOpts) + "\n");
+      return 0;
+    }
+    case "timing":
+      w(inspect.formatTiming(events) + "\n");
+      return 0;
+    case "cost": {
+      const rate = typeof flags["dollar-per-1k"] === "string" ? Number(flags["dollar-per-1k"]) : undefined;
+      const costOpts: Parameters<typeof inspect.formatCost>[1] = {};
+      if (typeof rate === "number" && Number.isFinite(rate)) costOpts.dollar_per_1k_tokens = rate;
+      w(inspect.formatCost(events, costOpts) + "\n");
+      return 0;
+    }
+    case "detectors":
+      w(inspect.formatDetectors(events) + "\n");
+      return 0;
+    case "tools":
+      w(inspect.formatTools(events) + "\n");
+      return 0;
+    case "mcp":
+      w(inspect.formatMcp(events) + "\n");
+      return 0;
+  }
+}
+
 
 function commandValidate(parsed: ParsedFlags): number {
   const path = parsed.positional[1];
@@ -603,6 +675,40 @@ async function commandMemory(parsed: ParsedFlags): Promise<number> {
   return 2;
 }
 
+function commandReplay(parsed: ParsedFlags): number {
+  const briefId = parsed.positional[1];
+  if (!briefId) {
+    process.stderr.write("openwar replay: missing <brief_id>\n");
+    return 2;
+  }
+  const result = runReplay({ briefId });
+  // Exit non-zero when current detector code disagrees with recorded trace.
+  // Useful as a regression gate in CI.
+  if (result.drift_count > 0) return 1;
+  return 0;
+}
+
+async function commandDashboard(parsed: ParsedFlags): Promise<number> {
+  const portStr = typeof parsed.flags["port"] === "string" ? parsed.flags["port"] : "8780";
+  const port = Number(portStr);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+    process.stderr.write(`openwar dashboard: invalid --port "${portStr}"\n`);
+    return 2;
+  }
+  const { startDashboard } = await import("./dashboard/server.js");
+  const server = await startDashboard({ port });
+  process.stdout.write(`openwar dashboard: http://127.0.0.1:${port}/\n`);
+  process.stdout.write(`Press Ctrl+C to stop.\n`);
+  // Keep the process alive until SIGINT.
+  return new Promise<number>((resolve) => {
+    const shutdown = () => {
+      server.close(() => resolve(0));
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  });
+}
+
 async function commandMcp(parsed: ParsedFlags): Promise<number> {
   const sub = parsed.positional[1];
   const w = process.stdout.write.bind(process.stdout);
@@ -728,6 +834,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return await commandMemory(parsed);
     case "mcp-serve":
       return await commandMcpServe(parsed);
+    case "replay":
+      return commandReplay(parsed);
+    case "dashboard":
+      return await commandDashboard(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;

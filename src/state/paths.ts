@@ -5,7 +5,11 @@ export function openwarHome(): string {
   return process.env.OPENWAR_HOME ?? join(homedir(), ".openwar");
 }
 
+// v0.8: OPENWAR_SESSIONS_DIR overrides the default `<OPENWAR_HOME>/sessions`
+// location wholesale. Useful for integrators (War Room) who relocate the
+// session store, and for tests pointing at a tmpdir.
 export function sessionsDir(): string {
+  if (process.env.OPENWAR_SESSIONS_DIR) return process.env.OPENWAR_SESSIONS_DIR;
   return join(openwarHome(), "sessions");
 }
 
@@ -15,6 +19,13 @@ export function sessionFile(briefId: string): string {
 
 export function transcriptFile(briefId: string): string {
   return join(sessionsDir(), `${sanitize(briefId)}.transcript.jsonl`);
+}
+
+// v0.8: structured trace event stream. Sibling to the transcript, flat layout
+// (kept consistent with sessionFile / transcriptFile rather than introducing a
+// per-session subfolder).
+export function traceFile(briefId: string): string {
+  return join(sessionsDir(), `${sanitize(briefId)}.trace.ndjson`);
 }
 
 // v0.6: per-project persistence root. Sibling to sessions/. Holds the three
