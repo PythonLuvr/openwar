@@ -2,13 +2,9 @@
 
 ## [Unreleased]
 
-### Changed
+## 0.11.1
 
-- Adopt published `@pythonluvr/squire@1.0.0` as the cli-bridge runtime (previously vendored via a local link). `package.json` and the lockfile now resolve from the npm registry; the `src/adapters/cli-bridge.ts` import path was already `'@pythonluvr/squire'`, so no source change was required. Full test suite green against the published artifact.
-
-## 0.10.1
-
-Two honest gaps closed without expanding scope. The hero rewrite makes the README's first screen match the v0.10.0 promise (the chat REPL is the front door, not a buried section). The cancellation primitive makes the runtime survive its most likely real-world annoyance, a slow tool call, without losing the trace or killing the session.
+Two honest gaps closed without expanding scope. The hero rewrite makes the README's first screen match the v0.10.0 promise (the chat REPL is the front door, not a buried section). The cancellation primitive makes the runtime survive its most likely real-world annoyance, a slow tool call, without losing the trace or killing the session. Also adopts the published `@pythonluvr/squire@1.0.0` package (previously vendored via a local workspace link), so OpenWar is now a real-world consumer of Squire on npm.
 
 ### Added
 
@@ -27,9 +23,10 @@ Two honest gaps closed without expanding scope. The hero rewrite makes the READM
 ### Changed
 
 - **`SandboxContext`** gains an optional `signal?: AbortSignal` field plus a runtime-internal `_withSignal(signal)` factory that produces a sibling context carrying the per-call signal. The frozen-context invariant is preserved.
-- **`docs/chat.md`** gets a new "Cancelling a tool call (v0.10.1+)" section walking through the Ctrl-C semantics, the 2-second escalation window, what the agent sees when a tool is cancelled, and the MCP 5-second grace pattern.
+- **`docs/chat.md`** gets a new "Cancelling a tool call (v0.11.1+)" section walking through the Ctrl-C semantics, the 2-second escalation window, what the agent sees when a tool is cancelled, and the MCP 5-second grace pattern.
 - **`docs/observability.md`** documents the new `tool_cancelled` event and the schema bump.
 - **`docs/tools.md`** documents the `ctx.signal` contract for custom-tool authors.
+- **Adopt published `@pythonluvr/squire@1.0.0`** as the cli-bridge runtime. `package.json` and the lockfile now resolve from the npm registry; the `src/adapters/cli-bridge.ts` import path was already `'@pythonluvr/squire'`, so no source change was required. Full test suite green against the published artifact.
 
 ### Design notes (Phase 0 deviations approved)
 
@@ -51,7 +48,7 @@ Two honest gaps closed without expanding scope. The hero rewrite makes the READM
 
 `cli-bridge` becomes a thin wrapper over **[@pythonluvr/squire](https://github.com/PythonLuvr/squire)**, a new standalone npm package extracted from this codebase. Public behavior is unchanged: `openwar run brief.md` produces identical traces, identical phase events, identical tool-call shapes before and after the split. The architectural change is for discoverability. Squire ships its own README, its own front door, and lets developers searching "run Claude Code from Node.js" or "orchestrate multiple CLI agents" land on a focused tool with a clean API instead of a buried module path inside OpenWar.
 
-Originally scoped as one ship covering structured event streaming for Claude Code / Codex / Gemini CLI. Phase 0 review caught that the brief's claimed `SquireEvent` surface (`tool_call`, `tool_result`, `message_start/stop`) does not match the code that exists today (text-stream only, no per-CLI parsers). Shipping the full surface would have required building three new vendor JSON-stream parsers from scratch and snapshot fixtures from real CLI runs. Split into v0.11.0 (foundations + honest event union) and v0.11.1 (per-CLI parsers and the richer event union) on the same pattern as v0.7 / v0.9 / v0.10 splits. Four for four.
+Originally scoped as one ship covering structured event streaming for Claude Code / Codex / Gemini CLI. Phase 0 review caught that the brief's claimed `SquireEvent` surface (`tool_call`, `tool_result`, `message_start/stop`) does not match the code that exists today (text-stream only, no per-CLI parsers). Shipping the full surface would have required building three new vendor JSON-stream parsers from scratch and snapshot fixtures from real CLI runs. Split into v0.11.0 (foundations + honest event union) with per-CLI parsers and the richer event union deferred to a future Squire v1.x.x release that OpenWar will adopt via dep bump when it lands. Same pattern as v0.7 / v0.9 / v0.10 splits. Four for four.
 
 ### Added (Squire side, separate package)
 
@@ -96,7 +93,7 @@ Squire must publish first (OpenWar depends on it). Order:
 
 `openwar chat`: the front door. (Patch applied post-initial-commit to close three corners caught during honest self-review: Windows readline handling, adversarial agent-drift coverage at the session level, and full emission of all three chat trace events. See "Post-commit fixes" section below.) The runtime is the same; the entry point is new. A non-developer describes what they want in plain English, OpenWar asks clarifying questions if needed, proposes a plan, gets approval, executes through the existing phase machine, and surfaces destructive prompts as plain English questions instead of y/n flags. The audit trail underneath (trace.ndjson, phase events, detector log, learned profile) all still exists. Power users keep writing briefs by hand. Everyone else just talks.
 
-Originally scoped as one ship. Split during Phase 0 review into v0.10.0 (functional chat layer) and v0.10.1 (positioning + UX refinements based on real adoption signal) on the same pattern as the v0.7 reorder and v0.9 split. Three for three on this pattern.
+Originally scoped as one ship. Split during Phase 0 review into v0.10.0 (functional chat layer) and v0.11.1 (positioning + UX refinements based on real adoption signal) on the same pattern as the v0.7 reorder and v0.9 split. Three for three on this pattern.
 
 ### Added
 
@@ -118,17 +115,17 @@ Originally scoped as one ship. Split during Phase 0 review into v0.10.0 (functio
 
 ### Design notes (Phase 0 deviations approved)
 
-- **Split into v0.10.0 + v0.10.1**. Functional chat layer ships now; README hero rewrite and mid-tool-call cancellation wait for adoption signal. Same pattern as v0.7 / v0.9 splits.
+- **Split into v0.10.0 + v0.11.1**. Functional chat layer ships now; README hero rewrite and mid-tool-call cancellation wait for adoption signal. Same pattern as v0.7 / v0.9 splits.
 - **Tool-call intent extraction, not free-text classification**. Free-text would drift at scale. The four-tool contract is testable from day one with adversarial fixtures.
 - **cli-bridge incompatible with conversation agent (architectural)**. cli-bridge does not surface tool-call events to OpenWar; the bridged binary's stdout is free text. We picked **option (c) hybrid**: the conversation agent uses a tool-call-capable BYOK adapter; the execution adapter can still be cli-bridge for free local Claude Code use. Stronger than the brief's binary (a)/(b) options.
 - **Conservative authorization is load-bearing**. Adversarial fixtures pin every destructive category individually. The plan presenter explicitly lists "Not authorized" with consequence sentences so the user sees what is excluded as visibly as what is included.
 - **Off-topic mid-conversation: single-task focus** (option D, not in brief). Agent says "I'm focused on X right now. After it's done I can help with Y. Want me to remember it for after?" rather than compiling a second brief in the same session.
-- **Polite abort only in v0.10.0**. Mid-tool-call cancellation deferred to v0.10.1.
+- **Polite abort only in v0.10.0**. Mid-tool-call cancellation deferred to v0.11.1.
 - **Save-brief replay semantics explicitly documented**. "Replays deliverables on the named project; if repo state has drifted, the agent may need different actions." Header in the file + paragraph in docs/chat.md.
 - **Determinism scoping honest**. Compiler is pure; conversation feeding it is stochastic. Docs say so.
 - **Path-vs-command heuristic** (caught during integration testing). Real slash commands are single-word `[a-z]+`; paths like `/index.html` or `/usr/local/bin` are treated as user text and routed to the conversation agent.
 
-### Out of scope (deferred to v0.10.1)
+### Out of scope (deferred to v0.11.1)
 
 - README hero rewrite (positioning change pending adoption signal).
 - Mid-tool-call cancellation (`/abort` is polite in v0.10.0).

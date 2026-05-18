@@ -17,7 +17,7 @@ import { dirname } from "node:path";
 import { traceFile, sessionsDir } from "./paths.js";
 import type { Phase, RoleId, CoordinatorState, SubTaskStatus } from "../types.js";
 
-// v0.10.1 bumps to 2 for the additive `tool_cancelled` event type. The bump
+// v0.11.1 bumps to 2 for the additive `tool_cancelled` event type. The bump
 // is forward-compatible: readers that only know v1 events skip unknown types.
 export const TRACE_SCHEMA_VERSION = 2;
 
@@ -57,7 +57,7 @@ export type TraceEvent =
   | { type: "chat_session_compiled"; at: string; chat_id: string; brief_id: string }
   | { type: "chat_session_resumed"; at: string; chat_id: string }
   | { type: "chat_brief_saved"; at: string; chat_id: string; path: string }
-  // v0.10.1: tool-call cancellation. Emitted when an in-flight tool call is
+  // v0.11.1: tool-call cancellation. Emitted when an in-flight tool call is
   // aborted by the operator (chat REPL ctrl-c, programmatic
   // Session.cancelCurrentToolCall, or a caller-provided RunOptions.signal),
   // a runtime timeout, or session shutdown. `partial_output` carries

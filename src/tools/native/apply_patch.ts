@@ -179,7 +179,7 @@ async function atomicWrite(
   }
 }
 
-// v0.10.1: roll one file back to a captured pre-image. If pre-image is null,
+// v0.11.1: roll one file back to a captured pre-image. If pre-image is null,
 // the file did not exist before the patch and we delete it. Used by the
 // cancellation rollback path so a half-applied multi-file patch leaves the
 // tree in its pre-call state. Best-effort: a fs error during rollback is
@@ -281,7 +281,7 @@ export const applyPatchExecutor: ToolExecutor = async (
     planned.push({ path: resolved, content: outContent, preImage });
   }
 
-  // Second pass: write everything. v0.10.1 rolls back on cancellation: if
+  // Second pass: write everything. v0.11.1 rolls back on cancellation: if
   // ctx.signal fires after some files have been written, restore those
   // files from their captured pre-images so the tree is back to its
   // pre-call state. If any write fails (not cancellation), the partial

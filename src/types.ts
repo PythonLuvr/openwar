@@ -332,14 +332,14 @@ export interface RunOptions {
   // `openwar inspect` can show the originating chat. Undefined for runs
   // launched via `openwar run` directly.
   chatId?: string;
-  // v0.10.1: caller-provided abort signal. When fired, the runner cancels
+  // v0.11.1: caller-provided abort signal. When fired, the runner cancels
   // the in-flight tool call at the next dispatch boundary, surfaces a
   // structured tool-result with status="cancelled" to the model, emits a
   // `tool_cancelled` trace event, and lets the phase machine continue.
   // The signal does NOT abort the entire run; programs that want full
   // shutdown should also stop calling Session.continue() afterward.
   signal?: AbortSignal;
-  // v0.10.1: callback invoked synchronously once the runner has constructed
+  // v0.11.1: callback invoked synchronously once the runner has constructed
   // the live Session handle, before the phase machine starts. Callers that
   // want to drive cancellation programmatically (chat REPL, integrators)
   // stash the handle here and call `session.cancelCurrentToolCall()` from
@@ -359,11 +359,11 @@ export interface RunResult {
   messages: Message[];
 }
 
-// ---------- v0.10.1 cancellation surface ----------
+// ---------- v0.11.1 cancellation surface ----------
 //
 // `SessionEvent` is the live observation surface for runtime events that
 // integrators (chat REPL, War Room, external programs) care about during an
-// active session. v0.10.1 introduces it with a single variant; future minor
+// active session. v0.11.1 introduces it with a single variant; future minor
 // releases extend the union without breaking. Distinct from `TraceEvent`
 // (persisted to disk) and `CoordinatorEvent` (multi-agent only).
 

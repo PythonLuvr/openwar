@@ -51,7 +51,7 @@ import { CliBridgeAdapter } from "./adapters/cli-bridge.js";
 import { ToolCallRegistry, sessionFromRegistry, raceWithCancellation } from "./runtime/cancellation.js";
 import { TOOL_CANCELLED_ERROR_CODE, TOOL_CANCELLED_MESSAGE } from "./sandbox/types.js";
 
-// v0.10.1: how long to wait for an MCP server to honor an abort before
+// v0.11.1: how long to wait for an MCP server to honor an abort before
 // synthesizing a cancelled result locally. Per the brief's Q7 lean.
 const MCP_CANCEL_GRACE_MS = 5000;
 
@@ -403,7 +403,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     brief_id: session.meta.brief_id,
   });
 
-  // v0.10.1: per-session cancellation registry. Every tool dispatch registers
+  // v0.11.1: per-session cancellation registry. Every tool dispatch registers
   // its AbortController here so chat REPL ctrl-c, programmatic
   // Session.cancelCurrentToolCall(), and RunOptions.signal can all converge
   // on the same cancel path. The Session handle is offered to the optional
@@ -456,7 +456,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
           authorization_categories: [`mcp_tool:${cfg.name}:${t.name}`],
         });
         toolExecutors.set(fqName, async (call, ctx) => {
-          // v0.10.1: MCP servers do not necessarily honor AbortSignal.
+          // v0.11.1: MCP servers do not necessarily honor AbortSignal.
           // Fire the signal, give the server `MCP_CANCEL_GRACE_MS` to
           // settle naturally, then synthesize a local cancelled result
           // and let the phase machine continue. The orphaned MCP call

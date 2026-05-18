@@ -117,7 +117,7 @@ export const httpFetchExecutor: ToolExecutor = async (
 
   if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
 
-  // v0.10.1: per-call AbortController combines the existing timeout/truncation
+  // v0.11.1: per-call AbortController combines the existing timeout/truncation
   // path with the runtime's ctx.signal. If the operator cancels mid-fetch,
   // ctx.signal fires, we forward to ac.abort(), and the in-flight fetch /
   // chunk reader bails with an AbortError. Whatever the reader already

@@ -211,13 +211,13 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
     prompt: (q) => rl.question(q),
   };
 
-  // v0.10.0 + v0.10.1: Ctrl-C handling.
+  // v0.10.0 + v0.11.1: Ctrl-C handling.
   //
   // v0.10.0 baseline: SIGINT closes readline cleanly so the main loop's
   // exit path runs with banner + saved-session message. Critical on Windows
   // where Ctrl-C interrupts mid-line more aggressively than on POSIX.
   //
-  // v0.10.1 addition: when a tool call is in flight inside the active run,
+  // v0.11.1 addition: when a tool call is in flight inside the active run,
   // the first SIGINT cancels that tool (via Session.cancelCurrentToolCall)
   // instead of closing readline; a second SIGINT within
   // CTRL_C_ESCALATE_MS escalates to the v0.10.0 close path. SIGINT with
@@ -287,7 +287,7 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
         io: runnerIo,
       };
       runOpts.chatId = chatId;
-      // v0.10.1: capture the live Session so the SIGINT handler can
+      // v0.11.1: capture the live Session so the SIGINT handler can
       // cancel in-flight tool calls. Clear it after the run returns.
       runOpts.onSession = (s) => { liveSession = s; };
       try {
@@ -355,7 +355,7 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
 // might actually type.
 const EOF_SENTINEL = Symbol("openwar.chat.eof") as unknown as string;
 
-// v0.10.1: how long after a first Ctrl-C-during-tool-call before a second
+// v0.11.1: how long after a first Ctrl-C-during-tool-call before a second
 // Ctrl-C escalates to a regular readline close (and the chat-end banner +
 // saved-session path). Hardcoded per the brief's Q1 lean; if a user
 // requests configurability later, ship it then.

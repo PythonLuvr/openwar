@@ -11,7 +11,7 @@ import { cancelledResult, isAborted } from "./_cancellation.js";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 300_000;
 const KILL_GRACE_MS = 2000;
-// v0.10.1: operator cancellation gets a longer SIGTERM-to-SIGKILL window
+// v0.11.1: operator cancellation gets a longer SIGTERM-to-SIGKILL window
 // than the timeout path so well-behaved children have time to clean up
 // (close file handles, flush logs, release locks). Matches Squire's pattern.
 const CANCEL_GRACE_MS = 3000;
@@ -146,7 +146,7 @@ export const shellExecExecutor: ToolExecutor = async (
 
     let killed = false;
     let killSignal: string | undefined;
-    // v0.10.1: discriminator between "killed by internal timeout" and
+    // v0.11.1: discriminator between "killed by internal timeout" and
     // "killed by operator cancel". The close handler reads this to pick
     // the cancelled vs timeout result shape.
     let cancelledByOperator = false;
@@ -165,7 +165,7 @@ export const shellExecExecutor: ToolExecutor = async (
     const stdoutPromise = capStream(child.stdout!, maxOut);
     const stderrPromise = capStream(child.stderr!, maxOut);
 
-    // v0.10.1: operator cancellation. SIGTERM with a longer grace window
+    // v0.11.1: operator cancellation. SIGTERM with a longer grace window
     // than the timeout path, then SIGKILL. The close handler will still
     // fire and resolve once stdio drains; we leave it to read
     // `cancelledByOperator` and build the cancelledResult shape there so

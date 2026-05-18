@@ -24,7 +24,7 @@ export interface SandboxContextFields {
   // v0.6: brief_id, populated by the runner. Stamped onto memory writes for
   // provenance.
   brief_id?: string;
-  // v0.10.1: per-tool-call abort signal. The runtime creates a fresh
+  // v0.11.1: per-tool-call abort signal. The runtime creates a fresh
   // AbortController for every tool dispatch and passes its signal here.
   // Native tools honor it (shell_exec SIGTERM/SIGKILL, http_fetch fetch abort,
   // apply_patch rollback, ...). Custom tool authors must thread it through
@@ -63,7 +63,7 @@ export class SandboxContext {
     return new SandboxContext(fields);
   }
 
-  // v0.10.1: produce a sibling context that carries the given AbortSignal.
+  // v0.11.1: produce a sibling context that carries the given AbortSignal.
   // Used by the runtime to attach a per-call cancellation signal without
   // mutating the frozen original. Runtime-internal; not re-exported.
   _withSignal(signal: AbortSignal): SandboxContext {
@@ -80,11 +80,11 @@ export class SandboxContext {
   }
 }
 
-// v0.10.1: shared error code for tool results that returned because the
+// v0.11.1: shared error code for tool results that returned because the
 // runtime fired ctx.signal mid-execution. Distinct from TIMEOUT (per-tool
 // hard deadline) and ABORTED (subprocess-level termination signals).
 export const TOOL_CANCELLED_ERROR_CODE = "CANCELLED";
 
-// v0.10.1: shared marker text included in cancelled tool results so the
+// v0.11.1: shared marker text included in cancelled tool results so the
 // model and the trace recognize the same shape across all native tools.
 export const TOOL_CANCELLED_MESSAGE = "Tool call cancelled by operator.";

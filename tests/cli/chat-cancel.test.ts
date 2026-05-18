@@ -1,4 +1,4 @@
-// v0.10.1: chat REPL Ctrl-C semantics.
+// v0.11.1: chat REPL Ctrl-C semantics.
 //
 // The handler itself lives inside the runChatCommand closure (it captures
 // the rl + liveSession variables), so end-to-end SIGINT testing requires

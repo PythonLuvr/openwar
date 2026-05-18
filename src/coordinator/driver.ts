@@ -99,7 +99,7 @@ export interface RunCoordinatorOptions {
   sessionId: string;
   // Tracker of all destructive approvals that occurred during this run.
   onApproval: (a: { action: string; approved: boolean; session_categories?: string[] }) => void;
-  // v0.10.1: per-tool-call cancellation registry. Optional; when present,
+  // v0.11.1: per-tool-call cancellation registry. Optional; when present,
   // every executor dispatch inside the coordinator registers itself so
   // operator cancellation (chat REPL ctrl-c, RunOptions.signal) can abort
   // mid-call. Cancellation ends the current role's turn; the coordinator
@@ -620,7 +620,7 @@ async function runExecuteState(args: {
         });
         continue;
       }
-      // v0.10.1: register the call with the cancellation registry (if
+      // v0.11.1: register the call with the cancellation registry (if
       // any) and derive a per-call sandbox carrying the registry's
       // AbortSignal. If cancelled, the role's turn ends with the
       // cancelled tool-result; the coordinator decides whether to

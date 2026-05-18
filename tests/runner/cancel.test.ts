@@ -1,4 +1,4 @@
-// v0.10.1: Session.cancelCurrentToolCall + ToolCallRegistry behavior
+// v0.11.1: Session.cancelCurrentToolCall + ToolCallRegistry behavior
 // + raceWithCancellation (the MCP-grace primitive).
 
 import { test } from "node:test";

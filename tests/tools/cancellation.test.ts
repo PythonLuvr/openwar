@@ -1,4 +1,4 @@
-// v0.10.1: per-tool cancellation behavior.
+// v0.11.1: per-tool cancellation behavior.
 //
 // Covers every native tool that the brief named explicitly (shell_exec,
 // http_fetch, apply_patch) plus representative fast-path tools (read_file,

@@ -1,4 +1,4 @@
-// v0.10.1 cancellation helpers shared by every native tool. Keeping the
+// v0.11.1 cancellation helpers shared by every native tool. Keeping the
 // pattern in one place so the cancellation-check call sites stay terse and
 // the contract (error code, message, meta shape) stays uniform across tools.
 

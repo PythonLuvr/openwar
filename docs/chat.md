@@ -137,7 +137,7 @@ You don't need any of these. Just describe what you want. The commands are an es
 
 ---
 
-## Cancelling a tool call (v0.10.1+)
+## Cancelling a tool call (v0.11.1+)
 
 If a tool call is taking too long (a slow shell command, an in-flight HTTP fetch, an unresponsive MCP call), Ctrl-C cancels just that call instead of killing the whole session.
 
@@ -233,10 +233,10 @@ This contract eliminates the free-text-classification drift that would otherwise
 - **History** is in-memory only (200-entry buffer). v0.10.0 does not persist readline history across sessions; the chat-store NDJSON is the durable record.
 - **Programmatic stdin** (used by tests and integrators embedding `openwar chat` in another tool) sets `terminal: false`, disabling raw mode and ANSI escape interpretation. The `runChatCommand` function accepts optional `stdin` and `stdout` overrides on the options object so embedders can drive the loop from custom streams.
 
-## What's not in v0.10.0 (deferred to v0.10.1)
+## What's not in v0.10.0 (deferred to v0.11.1)
 
 - **README hero rewrite reframing OpenWar as "the agent runtime non-developers can actually use".** Positioning change waits for non-dev adoption signal from v0.10.0 use. v0.10.0 ships a "New in v0.10" section that opens the chat path; the existing hero stays.
-- **Mid-tool-call cancellation.** v0.10.0 ships polite abort: `/abort` ends at the next phase boundary, not mid-tool-call. v0.10.1 adds true mid-call cancel if real users hit the gap.
+- **Mid-tool-call cancellation.** v0.10.0 ships polite abort: `/abort` ends at the next phase boundary, not mid-tool-call. v0.11.1 adds true mid-call cancel if real users hit the gap.
 - **Streaming responses during agent turns.** Batched per-turn is fine; streaming polish later.
 - **Multi-channel chat surfaces (Discord, Slack, Telegram).** Terminal `openwar chat` is the v0.10 ship. Multi-channel could come as v0.10.x or v0.11.
 

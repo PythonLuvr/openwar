@@ -1,4 +1,4 @@
-// v0.10.1: per-tool-call cancellation registry.
+// v0.11.1: per-tool-call cancellation registry.
 //
 // The runner creates one ToolCallRegistry per session. Every tool dispatch
 // (native, MCP-forwarded, coordinator-routed) registers itself before
@@ -9,7 +9,7 @@
 //
 // Design notes
 // -----------
-// - Only one tool call is active at a time per session. v0.10.1 does NOT
+// - Only one tool call is active at a time per session. v0.11.1 does NOT
 //   support parallel tool dispatch; if a future release ships it the
 //   registry becomes a Map keyed by call_id.
 // - `cancel()` awaits the executor's actual exit so callers know when it's
@@ -46,7 +46,7 @@ export class ToolCallRegistry {
   begin(callId: string, toolName: string): AbortController {
     if (this.active) {
       throw new Error(
-        `ToolCallRegistry: begin() while call ${this.active.callId} is still active. v0.10.1 does not support concurrent tool calls.`,
+        `ToolCallRegistry: begin() while call ${this.active.callId} is still active. v0.11.1 does not support concurrent tool calls.`,
       );
     }
     const ac = new AbortController();

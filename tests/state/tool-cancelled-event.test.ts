@@ -1,4 +1,4 @@
-// v0.10.1: tool_cancelled trace event shape + TRACE_SCHEMA_VERSION bump.
+// v0.11.1: tool_cancelled trace event shape + TRACE_SCHEMA_VERSION bump.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,7 +13,7 @@ import {
   type TraceEvent,
 } from "../../src/state/trace.js";
 
-test("TRACE_SCHEMA_VERSION bumped to 2 for v0.10.1", () => {
+test("TRACE_SCHEMA_VERSION bumped to 2 for v0.11.1", () => {
   assert.equal(TRACE_SCHEMA_VERSION, 2);
 });
 
@@ -21,7 +21,7 @@ test("trace header records the bumped schema version", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwar-trace-cancel-"));
   try {
     const filePath = join(dir, "x.ndjson");
-    new Tracer({ briefId: "x", enabled: true, openwarVersion: "0.10.1", filePath });
+    new Tracer({ briefId: "x", enabled: true, openwarVersion: "0.11.1", filePath });
     const raw = await readFile(filePath, "utf8");
     const header = JSON.parse(raw.trim().split("\n")[0]!);
     assert.equal(header.type, "trace_version");
@@ -35,7 +35,7 @@ test("tool_cancelled event round-trips through the tracer + readTraceFromPath", 
   const dir = await mkdtemp(join(tmpdir(), "openwar-trace-cancel-"));
   try {
     const filePath = join(dir, "y.ndjson");
-    const tracer = new Tracer({ briefId: "y", enabled: true, openwarVersion: "0.10.1", filePath });
+    const tracer = new Tracer({ briefId: "y", enabled: true, openwarVersion: "0.11.1", filePath });
     const ev: TraceEvent = {
       type: "tool_cancelled",
       call_id: "call_42",
@@ -59,7 +59,7 @@ test("tool_cancelled supports all three cancellation_source variants", async () 
   const dir = await mkdtemp(join(tmpdir(), "openwar-trace-cancel-"));
   try {
     const filePath = join(dir, "z.ndjson");
-    const tracer = new Tracer({ briefId: "z", enabled: true, openwarVersion: "0.10.1", filePath });
+    const tracer = new Tracer({ briefId: "z", enabled: true, openwarVersion: "0.11.1", filePath });
     const sources = ["operator_signal", "timeout", "runtime_shutdown"] as const;
     for (const source of sources) {
       tracer.emit({
@@ -85,7 +85,7 @@ test("readTraceFromPath ignores unknown event types from a future schema version
   const dir = await mkdtemp(join(tmpdir(), "openwar-trace-cancel-"));
   try {
     const filePath = join(dir, "future.ndjson");
-    const tracer = new Tracer({ briefId: "future", enabled: true, openwarVersion: "0.10.1", filePath });
+    const tracer = new Tracer({ briefId: "future", enabled: true, openwarVersion: "0.11.1", filePath });
     tracer.emit({
       type: "tool_cancelled",
       call_id: "c1",

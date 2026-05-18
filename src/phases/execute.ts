@@ -46,7 +46,7 @@ export interface ExecuteOpts {
   // Threaded into snapshot() so detectors honor the overrides. Optional
   // because most runs do not set learned_profile in frontmatter.
   detectorSensitivities?: DetectorSensitivityMap;
-  // v0.10.1: per-tool-call cancellation registry. When present, every
+  // v0.11.1: per-tool-call cancellation registry. When present, every
   // executor invocation registers itself with the registry so external
   // callers (chat REPL, RunOptions.signal forwarding) can cancel mid-call.
   // Optional so existing test callers and the coordinator's inner adapter
@@ -189,7 +189,7 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
           at: new Date().toISOString(),
         });
         const toolStartMs = Date.now();
-        // v0.10.1: register the call with the cancellation registry (if
+        // v0.11.1: register the call with the cancellation registry (if
         // any) and derive a per-call sandbox carrying the registry's
         // AbortSignal. Tools read ctx.signal to honor cancellation; the
         // dispatcher inspects the returned ToolResult.error.code to
@@ -216,7 +216,7 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
         opts.onToolCall?.(call, round);
         const durationMs = result.meta?.duration_ms ?? Date.now() - toolStartMs;
         if (cancelled) {
-          // v0.10.1: distinct trace event for operator cancellation. The
+          // v0.11.1: distinct trace event for operator cancellation. The
           // tool_result event is NOT emitted for cancelled calls; the
           // model still receives the cancellation tool-result via the
           // ordinary prior_tool_results channel above.

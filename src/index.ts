@@ -1,7 +1,7 @@
 // Public library surface. War Room and other integrators import from here.
 
 export * from "./types.js";
-// v0.10.1: explicit re-exports of the cancellation surface for discoverability.
+// v0.11.1: explicit re-exports of the cancellation surface for discoverability.
 // (Also already covered by `export *` above; named here so editor "Go to
 // definition" lands here for integrators.)
 export type {
