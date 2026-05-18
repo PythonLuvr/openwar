@@ -1,47 +1,40 @@
-// CLI-bridge adapter (v0.5).
+// CLI-bridge adapter (v0.11).
 //
-// Treats a CLI binary as an agent. The runtime delegates by shelling out to
-// the configured binary, capturing stdout, and feeding chunks back through
-// the StreamEvent contract the same way an LLM API adapter would.
+// v0.5-0.10 carried 330 lines of subprocess-spawn + Windows quirks + stdio
+// plumbing inline. As of v0.11 that machinery lives in @pythonluvr/squire;
+// this file is the thin wrapper that:
 //
-// Non-goals for v0.5 (documented in openwar.md):
-//   - Native tool-call translation. CLIs use their own tools.
-//   - MCP brokering. The CLI's MCP servers are its business.
-//   - Session-state forwarding. Operator manages CLI sessions externally.
+//   - serializes OpenWar's Message list into a single stdin prompt,
+//   - constructs a Squire instance with the same env / cwd / timeout knobs,
+//   - subscribes to Squire's event stream and translates each event into
+//     OpenWar's StreamEvent contract,
+//   - preserves the v0.7 `addExtraArgs` hook the MCP wiring uses to inject
+//     `--mcp-config <path>` at runtime.
 //
-// Authorization: every invocation of a cli-bridge adapter requires
-// `shell_exec` in the brief's authorized_costs (or in session_approved).
-// The runtime enforces this at the boundary; the adapter itself trusts
-// that it's only constructed for an authorized run.
+// Public behavior at OpenWar's surface is unchanged: same events, same
+// error shapes, same Windows quirks (Squire owns those now).
+//
+// Authorization: every invocation of a cli-bridge adapter still requires
+// `shell_exec` in the brief's authorized_costs. The runtime enforces this
+// at the boundary; the adapter trusts that it's only constructed for an
+// authorized run.
 
-import { spawn } from "node:child_process";
+import { Squire, type SquireEvent, type SquireOptions } from "@pythonluvr/squire";
 import type { AgentAdapter, SendMessageOptions, StreamEvent, AdapterConfig, Message } from "../types.js";
 
 export type AdapterTier = "free" | "paid";
 
 export interface CliBridgeOptions {
-  // Path or PATH-resolvable binary. Required.
   binary: string;
-  // Optional default args inserted before the prompt argv tail.
   args?: string[];
-  // Hard timeout for a single sendMessage call. Default 10 min.
   timeout_ms?: number;
-  // Optional working directory. Defaults to process.cwd().
   working_dir?: string;
-  // Extra env to merge. Caller env wins on conflict.
   env?: Record<string, string>;
-  // When true (default), the framework doc gets prepended to the prompt so
-  // bridged CLIs that don't already implement OpenWar get the behavioral
-  // overlay. When false, the system prompt is dropped and only the
-  // conversation is sent (used when the CLI has OpenWar in its own config).
   framework_prefix?: boolean;
-  // Tier label surfaced to the cost preview. Bridged CLIs are typically
-  // "free" because they use a local subscription; set to "paid" if your
-  // CLI bills per call.
   tier?: AdapterTier;
 }
 
-const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
+const DEFAULT_TIMEOUT_MS = 600_000;
 
 function serializeMessages(system: string, messages: Message[], framework_prefix: boolean): string {
   const parts: string[] = [];
@@ -59,7 +52,6 @@ function serializeMessages(system: string, messages: Message[], framework_prefix
   return parts.join("\n");
 }
 
-// Narrow accessors against the loosely-typed extra bag.
 function readString(extra: Record<string, unknown>, key: string): string | undefined {
   const v = extra[key];
   return typeof v === "string" ? v : undefined;
@@ -125,203 +117,115 @@ export class CliBridgeAdapter implements AgentAdapter {
     this.model = config.model ?? this.options.binary;
   }
 
-  // v0.7: runner-side hook to append args before the prompt. Used by the
-  // cli-bridge MCP-server-mode wiring to inject `--mcp-config <path>` (and
-  // future bridged-CLI registry entries' args) without having to know about
-  // them at AdapterConfig construction time. Appends to the existing args
-  // array; never mutates earlier entries.
+  // v0.7: runner-side hook to append args before the prompt. The MCP wiring
+  // calls this to inject `--mcp-config <path>` (and future bridged-CLI
+  // registry entries' args) without having to know about them at
+  // AdapterConfig construction time. Appends to the existing args array;
+  // never mutates earlier entries.
   addExtraArgs(args: string[]): void {
     if (args.length === 0) return;
     this.options.args = [...this.options.args, ...args];
   }
 
   isConfigured(): boolean {
-    // Adapter is "configured" if the binary string is set. Whether the
-    // binary actually exists on PATH is verified at spawn time and surfaces
-    // as a Phase 2 blocker if missing. Same model as the API adapters which
-    // can't pre-verify keys without making a call.
     return typeof this.options.binary === "string" && this.options.binary.length > 0;
   }
 
   async *sendMessage(opts: SendMessageOptions): AsyncIterable<StreamEvent> {
     const prompt = serializeMessages(opts.system, opts.messages, this.options.framework_prefix);
-    const argv = [...this.options.args];
-    const env = { ...process.env, ...(this.options.env ?? {}) };
 
-    // v0.6.2: Windows needs `shell: true` in two cases.
-    //
-    //   1. The binary explicitly ends in .cmd or .bat. Node's child_process
-    //      cannot spawn those without a shell on Windows (documented).
-    //   2. The binary has no extension at all (e.g. `--cli-binary claude`).
-    //      That's the natural shape operators type to match the binary's
-    //      name on PATH. Without shell mode, Windows CreateProcess does not
-    //      walk PATHEXT, so npm-installed CLIs (which land as .cmd shims)
-    //      fail with ENOENT. Shell mode lets cmd.exe do the PATHEXT walk.
-    //
-    // We do NOT unconditionally enable shell on Windows because the shell
-    // re-parses argv and mangles any binary path containing a space
-    // (the `C:\Program Files\nodejs\node.exe` case). Direct executables
-    // with an extension (.exe, .com) keep shell: false; CreateProcess
-    // handles them fine even when the path has spaces. POSIX is unaffected.
-    const needsShell =
-      process.platform === "win32" &&
-      (/\.(cmd|bat)$/i.test(this.options.binary) ||
-        !/\.[^./\\]+$/.test(this.options.binary));
-    const child = spawn(this.options.binary, argv, {
-      cwd: this.options.working_dir,
-      env: env as NodeJS.ProcessEnv,
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: needsShell,
-      windowsHide: true,
-    });
+    const squireOpts: SquireOptions = {
+      binary: this.options.binary,
+      args: [...this.options.args],
+      timeoutMs: this.options.timeout_ms,
+    };
+    if (this.options.working_dir) squireOpts.cwd = this.options.working_dir;
+    if (this.options.env) squireOpts.env = this.options.env;
 
-    let assembled = "";
-    let stderrBuf = "";
-    let timedOut = false;
-    let spawnError: Error | null = null;
+    const squire = new Squire(squireOpts);
 
-    // Watch for spawn errors (ENOENT, EACCES). These fire before any stdio
-    // event and need their own handler. v0.5.1 fix: also resolve on close so
-    // the await below cannot hang waiting for an error that never comes on a
-    // clean exit. The "error" handler still wins if it ever fires.
-    const spawnErrorPromise = new Promise<void>((resolve) => {
-      child.on("error", (err) => {
-        spawnError = err;
-        resolve();
-      });
-      child.once("close", () => resolve());
-    });
-
-    // Hard timeout. SIGTERM first, escalate to SIGKILL after 5s grace.
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* already dead */
-      }
-      setTimeout(() => {
-        if (!child.killed) {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            /* already dead */
-          }
-        }
-      }, 5_000).unref();
-    }, this.options.timeout_ms);
-    timeoutHandle.unref();
-
-    // Optional abort signal from the caller. Bridges to SIGTERM the same
-    // way the timeout does, but skips the "timeout" reason on the final
-    // error.
-    if (opts.signal) {
-      const onAbort = () => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          /* already dead */
-        }
-      };
-      if (opts.signal.aborted) onAbort();
-      else opts.signal.addEventListener("abort", onAbort, { once: true });
-    }
-
-    // Pipe the prompt in via stdin.
-    try {
-      child.stdin.write(prompt);
-      child.stdin.end();
-    } catch (err) {
-      // EPIPE if the child died before consuming stdin. Surface as the
-      // final error after the exit handler fires.
-      spawnError ??= err as Error;
-    }
-
-    // Async iterator over stdout chunks. Yields text_delta events.
-    const chunks: { value: string }[] = [];
+    // Buffered event queue with an async cursor. Mirrors the prior cli-bridge
+    // implementation's iterator drain loop, just sourcing from Squire's
+    // EventEmitter instead of raw stdout chunks.
+    const queue: SquireEvent[] = [];
     let resolveNext: (() => void) | null = null;
-    let done = false;
-    let exitCode: number | null = null;
-    let exitSignal: NodeJS.Signals | null = null;
+    let exited = false;
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
-      assembled += text;
-      chunks.push({ value: text });
+    const wakeNext = (): void => {
       if (resolveNext) {
         const r = resolveNext;
         resolveNext = null;
         r();
       }
+    };
+
+    squire.on("event", (event: SquireEvent) => {
+      queue.push(event);
+      wakeNext();
+    });
+    squire.once("exit", () => {
+      exited = true;
+      wakeNext();
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderrBuf += chunk.toString("utf8");
-    });
+    // Start the child. start() resolves when the lifecycle ends; we drain
+    // events in parallel and finish when the queue is empty AND exited.
+    const startPromise = squire.start(prompt, opts.signal ? { signal: opts.signal } : {});
 
-    child.on("close", (code, signal) => {
-      exitCode = code;
-      exitSignal = signal;
-      done = true;
-      clearTimeout(timeoutHandle);
-      if (resolveNext) {
-        const r = resolveNext;
-        resolveNext = null;
-        r();
+    try {
+      while (true) {
+        while (queue.length > 0) {
+          const e = queue.shift()!;
+          const out = translateEvent(e, this.options.binary);
+          if (out) yield out;
+          if (out && out.type === "done") return;
+          if (out && out.type === "error") return;
+        }
+        if (exited) break;
+        await new Promise<void>((resolve) => {
+          resolveNext = resolve;
+        });
       }
-    });
+    } finally {
+      // Make sure the start promise settles even if the consumer breaks out
+      // of iteration early. Squire owns child cleanup.
+      await startPromise.catch(() => undefined);
+    }
+  }
+}
 
-    // Drain stdout chunks while the process runs; once closed, emit the
-    // final done or error event.
-    while (true) {
-      if (chunks.length > 0) {
-        const next = chunks.shift()!;
-        yield { type: "text_delta", delta: next.value };
-        continue;
+function translateEvent(event: SquireEvent, binary: string): StreamEvent | null {
+  switch (event.type) {
+    case "text_delta":
+      return { type: "text_delta", delta: event.delta };
+    case "message_stop":
+      return { type: "done", message: event.assembled };
+    case "error": {
+      // Preserve the prefix the prior cli-bridge implementation prepended so
+      // error logs and tests remain grep-compatible across versions.
+      let msg = event.error.message;
+      if (msg.startsWith("Squire")) {
+        msg = msg.replace(/^Squire\(([^)]+)\):/, "cli-bridge ($1):");
+      } else if (!msg.startsWith(`cli-bridge (${binary})`)) {
+        msg = `cli-bridge (${binary}): ${msg}`;
       }
-      if (done) break;
-      await new Promise<void>((resolve) => {
-        resolveNext = resolve;
-      });
+      // The v0.5-v0.10 implementation prepended "spawn failed:" before raw
+      // ENOENT / EACCES messages. Preserve that for the spawn reason so the
+      // operator-visible wording is unchanged.
+      if (event.reason === "spawn" && !/spawn failed/i.test(msg)) {
+        msg = msg.replace(/^(cli-bridge \([^)]+\): )/, "$1spawn failed: ");
+      }
+      return { type: "error", error: new Error(msg) };
     }
-
-    // Process is closed. Decide outcome.
-    await spawnErrorPromise.catch(() => undefined); // ensure spawnError settled if it ever fires
-
-    if (spawnError) {
-      yield {
-        type: "error",
-        error: new Error(
-          `cli-bridge (${this.options.binary}): spawn failed: ${spawnError.message}`,
-        ),
-      };
-      return;
+    case "stdout":
+    case "stderr":
+    case "message_start":
+      return null;
+    default: {
+      const _exhaustive: never = event;
+      void _exhaustive;
+      return null;
     }
-
-    if (timedOut) {
-      yield {
-        type: "error",
-        error: new Error(
-          `cli-bridge (${this.options.binary}): timed out after ${this.options.timeout_ms}ms`,
-        ),
-      };
-      return;
-    }
-
-    if (exitCode !== 0) {
-      const sig = exitSignal ? ` signal=${exitSignal}` : "";
-      const tail = stderrBuf.trim().slice(-2000);
-      yield {
-        type: "error",
-        error: new Error(
-          `cli-bridge (${this.options.binary}): exit code ${exitCode}${sig}` +
-            (tail ? `\nstderr: ${tail}` : ""),
-        ),
-      };
-      return;
-    }
-
-    yield { type: "done", message: assembled };
   }
 }
 

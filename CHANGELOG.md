@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.11.0
+
+`cli-bridge` becomes a thin wrapper over **[@pythonluvr/squire](https://github.com/PythonLuvr/squire)**, a new standalone npm package extracted from this codebase. Public behavior is unchanged: `openwar run brief.md` produces identical traces, identical phase events, identical tool-call shapes before and after the split. The architectural change is for discoverability. Squire ships its own README, its own front door, and lets developers searching "run Claude Code from Node.js" or "orchestrate multiple CLI agents" land on a focused tool with a clean API instead of a buried module path inside OpenWar.
+
+Originally scoped as one ship covering structured event streaming for Claude Code / Codex / Gemini CLI. Phase 0 review caught that the brief's claimed `SquireEvent` surface (`tool_call`, `tool_result`, `message_start/stop`) does not match the code that exists today (text-stream only, no per-CLI parsers). Shipping the full surface would have required building three new vendor JSON-stream parsers from scratch and snapshot fixtures from real CLI runs. Split into v0.11.0 (foundations + honest event union) and v0.11.1 (per-CLI parsers and the richer event union) on the same pattern as v0.7 / v0.9 / v0.10 splits. Four for four.
+
+### Added (Squire side, separate package)
+
+- **[@pythonluvr/squire](https://github.com/PythonLuvr/squire) v1.0.0**. General-purpose runtime for spawning CLI AI agents (Claude Code, Codex, Gemini CLI) as subprocesses. MIT-licensed. Public API frozen at v1.0.0; additive changes only on the v1.x line. Zero runtime dependencies (Node stdlib only). Cross-platform (Windows / macOS / Linux). Bundled TypeScript types.
+- **`Squire` class** with `start(prompt) / send(followup) / stop({graceful})` lifecycle plus `stdout` / `stderr` / `event` / `exit` events.
+- **`SquireEvent` discriminated union**: `stdout`, `stderr`, `text_delta`, `message_start`, `message_stop`, `error`. Honest about v1.0 scope; per-CLI adapters with `tool_call` / `tool_result` events arrive in v1.x.
+- **MCP forwarding**: pass `mcp.servers` (inline) or `mcp.configPath` (pre-built) and Squire wires `--mcp-config <path>` (or a configurable flag) for the child CLI. Temp config files are cleaned up on stop.
+- **Claude Code permission auto-setup**: `autoSetup.claudeCode` merges `allowedTools` patterns into `~/.claude/settings.json` atomically while preserving everything else. Idempotent.
+- **`SquireAdapter` interface** exported as v1.0 contract for custom per-CLI parsers. `registerSquireAdapter(adapter)` for process-global registration.
+- **Cross-platform spawn**: Windows `.cmd` / `.bat` / extensionless-binary handling baked in. `needsShell` exported for callers that want to share the auto-detection logic.
+- **Typed error surface** (`SquireError`, `SquireAutoSetupError`) with stable `code` strings.
+
+### Added (OpenWar side)
+
+- **`@pythonluvr/squire` as a runtime dependency.** During local dev this is `file:../squire`; the publisher swaps to `^1.0.0` before npm publish.
+- **`docs/adapters.md` "Powered by" section** linking to the Squire repo and explaining the dependency split is purely architectural.
+- **README "Powered by" footer** linking to Squire as the underlying CLI-agent runtime.
+
+### Changed
+
+- **`src/adapters/cli-bridge.ts`** rewritten as a thin wrapper over Squire. Down from 330 lines of subprocess plumbing to ~210 lines of translation + serialization. The Windows quirks, timeout machinery, abort-signal handling, EPIPE recovery, and stderr buffering all move into Squire. `addExtraArgs` is preserved for the v0.7 MCP wiring.
+- **OpenWar's `StreamEvent` shape at the public surface is unchanged.** Existing cli-bridge tests that read events at OpenWar's boundary remain green.
+
+### Design notes (Phase 0 deviations approved)
+
+- **Split into v0.11.0 + v0.11.1.** Spawn + MCP forwarding + auto-setup ship as Squire v1.0.0 with an honest event union now; per-CLI vendor JSON-stream parsers (Claude Code, Codex, Gemini CLI) and the richer `SquireEvent` variants land in v1.1.0 as a minor additive bump once real CLI snapshot fixtures are captured.
+- **Decoupling is enforced by import discipline.** Squire's `src/` has zero `import` statements referencing OpenWar. The standalone positioning fails if Squire's API can't be used without OpenWar's types; this gate makes the failure visible.
+- **OpenWar's MCP server is NOT moving to Squire.** Squire knows how to pass `--mcp-config <path>` to a child; building the config file (with project-memory tools, brief-aware authorization, registry-specific format quirks for Gemini's `.gemini/settings.json`) stays in OpenWar. That logic is genuinely OpenWar-specific.
+
+### Test count
+
+OpenWar: no net change (existing cli-bridge tests stay green against the wrapper). Squire: ~40 new (spawn, events, adapters, MCP, autosetup, lifecycle). Target ~60 lands with v1.1.0 per-CLI adapter tests.
+
+### Publisher queue
+
+Squire must publish first (OpenWar depends on it). Order:
+1. `github.com/PythonLuvr/squire`: push, tag `v1.0.0`, GitHub release, `npm publish` via WebAuthn.
+2. Swap OpenWar's `package.json` dep from `file:../squire` to `^1.0.0`.
+3. `github.com/PythonLuvr/openwar`: push, tag `v0.11.0`, GitHub release, `npm publish` via WebAuthn.
+
 ## 0.10.0
 
 `openwar chat`: the front door. (Patch applied post-initial-commit to close three corners caught during honest self-review: Windows readline handling, adversarial agent-drift coverage at the session level, and full emission of all three chat trace events. See "Post-commit fixes" section below.) The runtime is the same; the entry point is new. A non-developer describes what they want in plain English, OpenWar asks clarifying questions if needed, proposes a plan, gets approval, executes through the existing phase machine, and surfaces destructive prompts as plain English questions instead of y/n flags. The audit trail underneath (trace.ndjson, phase events, detector log, learned profile) all still exists. Power users keep writing briefs by hand. Everyone else just talks.

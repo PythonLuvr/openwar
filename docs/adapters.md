@@ -55,6 +55,12 @@ adapter_overrides:
 
 `cli-bridge` is the adapter that turns a local CLI agent (Claude Code, Codex CLI, Gemini CLI, aider, your own custom tool) into an OpenWar-coordinated executor. The runtime spawns the binary, pipes the prompt in via stdin, streams stdout as `text_delta` events, and applies the phase machine the same way it would against any LLM adapter.
 
+### Powered by Squire (v0.11+)
+
+As of v0.11, the subprocess spawn / Windows quirks / stdio streaming layer lives in a standalone npm package, **[@pythonluvr/squire](https://github.com/PythonLuvr/squire)**, which OpenWar consumes as a dependency. The split is purely architectural; users see no behavior change at OpenWar's surface. The benefit is for the broader ecosystem: developers searching "run Claude Code from Node.js" or "orchestrate multiple CLI agents" land on Squire's focused README and find a clean API, then graduate to OpenWar when they want phase gates, traces, and replayable execution on top of it.
+
+If you're building your own CLI-agent integration and don't need OpenWar's phase machinery, you can use Squire directly. See [Squire's openwar-integration doc](https://github.com/PythonLuvr/squire/blob/main/docs/openwar-integration.md) for a worked example of how OpenWar's `CliBridgeAdapter` wraps it.
+
 ### Minimum invocation
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "name": "@pythonluvr/openwar",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Runtime that enforces the OpenWar framework: phase-aware agent loop with confirmation, blocker, and destructive-action gates.",
   "license": "MIT",
   "type": "module",
@@ -48,6 +48,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@pythonluvr/squire": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

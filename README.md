@@ -184,6 +184,10 @@ Drop-in upgrades preserve compatibility within a major version. Major bumps may 
 
 Questions, bug reports, framework discussion: [Discord](https://discord.gg/ku6GJS92V2). Issues and PRs welcome on this repo too.
 
+## Powered by
+
+As of v0.11, OpenWar's `cli-bridge` adapter runs on top of **[@pythonluvr/squire](https://github.com/PythonLuvr/squire)**, a standalone npm package extracted from this codebase. Squire owns the cross-platform subprocess spawn, MCP tool forwarding, and Claude Code permission auto-setup; OpenWar layers phase gates, traces, and replayable execution on top. If you only need the CLI-agent runtime layer, you can use Squire directly.
+
 ## License
 
 [MIT](./LICENSE). Use it, modify it, fork it, ship your own variants, paste it into commercial products. No obligations beyond keeping the copyright notice.
