@@ -48,6 +48,12 @@ import { MCPClient, StdioTransport, loadGlobalMcpConfig, splitCommand } from "./
 import { renderMemoryForRole } from "./roles/memory-visibility.js";
 import { setupCliBridgeMcpForwarding, replayMcpToolLog, CliBridgePermissionSetupError, type CliBridgeMcpSetup } from "./mcp/cli-bridge-wiring.js";
 import { CliBridgeAdapter } from "./adapters/cli-bridge.js";
+import { ToolCallRegistry, sessionFromRegistry, raceWithCancellation } from "./runtime/cancellation.js";
+import { TOOL_CANCELLED_ERROR_CODE, TOOL_CANCELLED_MESSAGE } from "./sandbox/types.js";
+
+// v0.10.1: how long to wait for an MCP server to honor an abort before
+// synthesizing a cancelled result locally. Per the brief's Q7 lean.
+const MCP_CANCEL_GRACE_MS = 5000;
 
 export async function run(opts: RunOptions): Promise<RunResult> {
   if (!opts.briefPath && !opts.briefSource) {
@@ -397,6 +403,27 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     brief_id: session.meta.brief_id,
   });
 
+  // v0.10.1: per-session cancellation registry. Every tool dispatch registers
+  // its AbortController here so chat REPL ctrl-c, programmatic
+  // Session.cancelCurrentToolCall(), and RunOptions.signal can all converge
+  // on the same cancel path. The Session handle is offered to the optional
+  // onSession callback so external callers can drive cancellation without
+  // touching the registry directly.
+  const cancellationRegistry = new ToolCallRegistry();
+  const liveSession = sessionFromRegistry(cancellationRegistry);
+  opts.onSession?.(liveSession);
+  if (opts.signal) {
+    const onParentAbort = () => {
+      // Best-effort: fire cancel if a call is active. If none, the next
+      // dispatched call will check ctx.signal at entry (registry creates
+      // a fresh ac per call; the parent signal cascades on each begin via
+      // the listener we install below).
+      void cancellationRegistry.cancel("operator_signal");
+    };
+    if (opts.signal.aborted) onParentAbort();
+    else opts.signal.addEventListener("abort", onParentAbort, { once: true });
+  }
+
   const toolDefinitions: ToolDefinition[] = [];
   const toolExecutors = new Map<string, ToolExecutor>();
   if (!opts.disableNativeTools) {
@@ -428,15 +455,46 @@ export async function run(opts: RunOptions): Promise<RunResult> {
           mcp_server_name: cfg.name,
           authorization_categories: [`mcp_tool:${cfg.name}:${t.name}`],
         });
-        toolExecutors.set(fqName, async (call) => {
-          const result = await client.callTool({ name: t.name, arguments: call.arguments as Record<string, unknown> });
-          const text = result.content.map(c => c.text ?? "").join("\n");
-          return {
-            call_id: call.id,
-            success: !result.isError,
-            content: text,
-            ...(result.isError && { error: { code: "MCP_ERROR", message: text } }),
+        toolExecutors.set(fqName, async (call, ctx) => {
+          // v0.10.1: MCP servers do not necessarily honor AbortSignal.
+          // Fire the signal, give the server `MCP_CANCEL_GRACE_MS` to
+          // settle naturally, then synthesize a local cancelled result
+          // and let the phase machine continue. The orphaned MCP call
+          // may still complete in the background; that's the server's
+          // bug (the runtime cannot kill a downstream child it doesn't
+          // own).
+          const startMs = Date.now();
+          const callPromise = client.callTool({ name: t.name, arguments: call.arguments as Record<string, unknown> });
+          const translate = (mcpResult: Awaited<typeof callPromise>): import("./tools/types.js").ToolResult => {
+            const text = mcpResult.content.map(c => c.text ?? "").join("\n");
+            return {
+              call_id: call.id,
+              success: !mcpResult.isError,
+              content: text,
+              ...(mcpResult.isError && { error: { code: "MCP_ERROR", message: text } }),
+            };
           };
+          const synthCancelled = (): import("./tools/types.js").ToolResult => ({
+            call_id: call.id,
+            success: false,
+            content: `${TOOL_CANCELLED_MESSAGE} (MCP server did not respond within ${MCP_CANCEL_GRACE_MS}ms grace; downstream call may still complete in background.)`,
+            error: { code: TOOL_CANCELLED_ERROR_CODE, message: TOOL_CANCELLED_MESSAGE },
+            meta: { duration_ms: Date.now() - startMs, bytes: 0 },
+          });
+          if (!ctx.signal) {
+            const r = await callPromise;
+            return translate(r);
+          }
+          type Winner =
+            | { tag: "result"; r: Awaited<typeof callPromise> }
+            | { tag: "cancelled" };
+          const winner = await raceWithCancellation<Winner>(
+            callPromise.then((r): Winner => ({ tag: "result", r })),
+            ctx.signal,
+            MCP_CANCEL_GRACE_MS,
+            (): Winner => ({ tag: "cancelled" }),
+          );
+          return winner.tag === "cancelled" ? synthCancelled() : translate(winner.r);
         });
       }
       mcpClients.push(client);
@@ -490,6 +548,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       sandbox,
       sessionApproved: session.meta.session_approved_categories ?? [],
       sessionId: session.meta.brief_id,
+      cancellationRegistry,
       onSnapshot: (snap, events) => {
         // Project coordinator snapshot into SessionMeta (schema v3 fields).
         const metaV3 = session.meta as typeof session.meta & {
@@ -590,6 +649,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     sandbox,
     sessionApproved: session.meta.session_approved_categories ?? [],
     tracer,
+    cancellationRegistry,
     ...(detectorSensitivities ? { detectorSensitivities } : {}),
     ...(learnedExecuteBudget !== undefined ? { maxSteps: learnedExecuteBudget } : {}),
     onMessage: (m) => {
@@ -659,6 +719,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
           history: [...executeResult.history, denialMsg],
           toolDefinitions, toolExecutors, sandbox,
           sessionApproved: session.meta.session_approved_categories ?? [],
+          cancellationRegistry,
           onMessage: (m) => { recordMessage(m); persist(); },
         });
         continue;
@@ -671,6 +732,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
         history: executeResult.history,
         toolDefinitions, toolExecutors, sandbox,
         sessionApproved: session.meta.session_approved_categories ?? [],
+        cancellationRegistry,
         onMessage: (m) => { recordMessage(m); persist(); },
       });
       continue;
@@ -704,6 +766,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       toolDefinitions, toolExecutors, sandbox,
       sessionApproved: session.meta.session_approved_categories ?? [],
       tracer,
+      cancellationRegistry,
       ...(detectorSensitivities ? { detectorSensitivities } : {}),
       onMessage: (m) => { recordMessage(m); persist(); },
     });

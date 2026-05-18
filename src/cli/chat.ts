@@ -23,7 +23,7 @@ import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { makeAdapter, type AdapterId } from "../adapters/index.js";
-import type { AdapterConfig, AgentAdapter, Brief, RunOptions } from "../types.js";
+import type { AdapterConfig, AgentAdapter, Brief, RunOptions, Session } from "../types.js";
 import { runtimeVersion } from "../version.js";
 import { ChatSession, runnerIoFromChatIo, type ChatIO } from "../chat/session.js";
 import { loadContextForChat } from "../chat/context.js";
@@ -211,15 +211,41 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
     prompt: (q) => rl.question(q),
   };
 
-  // v0.10.0: Ctrl-C handling. Without this, readline forwards SIGINT to the
-  // process and Node's default is to exit immediately, which means the chat
-  // log gets the user_quit reason silently and the operator sees no
-  // confirmation that the session was saved. Install a handler that ends
-  // the readline cleanly so the main loop's exit path runs (with banner +
-  // saved-session message). Critical on Windows where Ctrl-C interrupts
-  // mid-line more aggressively than on POSIX.
+  // v0.10.0 + v0.10.1: Ctrl-C handling.
+  //
+  // v0.10.0 baseline: SIGINT closes readline cleanly so the main loop's
+  // exit path runs with banner + saved-session message. Critical on Windows
+  // where Ctrl-C interrupts mid-line more aggressively than on POSIX.
+  //
+  // v0.10.1 addition: when a tool call is in flight inside the active run,
+  // the first SIGINT cancels that tool (via Session.cancelCurrentToolCall)
+  // instead of closing readline; a second SIGINT within
+  // CTRL_C_ESCALATE_MS escalates to the v0.10.0 close path. SIGINT with
+  // no in-flight tool call always closes (unchanged from v0.10.0).
+  let liveSession: Session | null = null;
+  let firstCancelAt = 0;
   const sigintHandler = (): void => {
-    // rl.close() throws if already closed; guard for double-Ctrl-C.
+    const now = Date.now();
+    if (liveSession && now - firstCancelAt < CTRL_C_ESCALATE_MS) {
+      // Second ctrl-c inside the escalate window. Fall through to close.
+      firstCancelAt = 0;
+      try { rl.close(); } catch { /* already closed */ }
+      return;
+    }
+    if (liveSession) {
+      // First ctrl-c with an active run. Try to cancel the in-flight tool
+      // call; if no call is active, treat it as the regular close path.
+      void liveSession.cancelCurrentToolCall().then((fired) => {
+        if (fired) {
+          firstCancelAt = now;
+          stdoutStream.write("\nCancelling tool call... (press Ctrl-C again within 2s to exit)\n");
+        } else {
+          try { rl.close(); } catch { /* already closed */ }
+        }
+      });
+      return;
+    }
+    // No active run: existing v0.10.0 behavior.
     try { rl.close(); } catch { /* already closed */ }
   };
   // Only install for the real process.stdin path; tests with injected stdin
@@ -261,12 +287,20 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
         io: runnerIo,
       };
       runOpts.chatId = chatId;
-      const r = await run(runOpts);
-      return {
-        completed: r.completed,
-        halted: r.halted,
-        ...(r.halt_reason ? { halt_reason: r.halt_reason } : {}),
-      };
+      // v0.10.1: capture the live Session so the SIGINT handler can
+      // cancel in-flight tool calls. Clear it after the run returns.
+      runOpts.onSession = (s) => { liveSession = s; };
+      try {
+        const r = await run(runOpts);
+        return {
+          completed: r.completed,
+          halted: r.halted,
+          ...(r.halt_reason ? { halt_reason: r.halt_reason } : {}),
+        };
+      } finally {
+        liveSession = null;
+        firstCancelAt = 0;
+      }
     },
   };
   if (resumeEvents) sessionOpts.resumeEvents = resumeEvents;
@@ -320,6 +354,12 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
 // from a normal user line without coupling to a magic string the user
 // might actually type.
 const EOF_SENTINEL = Symbol("openwar.chat.eof") as unknown as string;
+
+// v0.10.1: how long after a first Ctrl-C-during-tool-call before a second
+// Ctrl-C escalates to a regular readline close (and the chat-end banner +
+// saved-session path). Hardcoded per the brief's Q1 lean; if a user
+// requests configurability later, ship it then.
+const CTRL_C_ESCALATE_MS = 2000;
 
 // Infer project slug from working directory basename. Operator can override
 // with --project. Conservative: sanitizes to alphanumeric + dash so the

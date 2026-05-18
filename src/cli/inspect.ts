@@ -113,6 +113,8 @@ function formatEventLine(ev: TraceEvent): string {
       return `${at}  chat_resume  chat=${ev.chat_id}`;
     case "chat_brief_saved":
       return `${at}  chat_saved   chat=${ev.chat_id}  path=${ev.path}`;
+    case "tool_cancelled":
+      return `${at}  tool_cancel  ${ev.tool_name}  call=${ev.call_id}  source=${ev.cancellation_source}  partial_bytes=${ev.partial_output.length}`;
     case "error":
       return `${at}  ERROR        phase=${ev.phase}  ${ev.error}`;
     default: {

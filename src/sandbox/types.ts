@@ -24,6 +24,14 @@ export interface SandboxContextFields {
   // v0.6: brief_id, populated by the runner. Stamped onto memory writes for
   // provenance.
   brief_id?: string;
+  // v0.10.1: per-tool-call abort signal. The runtime creates a fresh
+  // AbortController for every tool dispatch and passes its signal here.
+  // Native tools honor it (shell_exec SIGTERM/SIGKILL, http_fetch fetch abort,
+  // apply_patch rollback, ...). Custom tool authors must thread it through
+  // their own implementations to participate in cancellation. Absent in
+  // bare contexts (tests that construct a minimal sandbox); tools must treat
+  // an undefined signal as "no cancellation possible".
+  signal?: AbortSignal;
 }
 
 export class SandboxContext {
@@ -34,6 +42,7 @@ export class SandboxContext {
   readonly shellEnabled: boolean;
   readonly project_slug?: string;
   readonly brief_id?: string;
+  readonly signal?: AbortSignal;
 
   private constructor(fields: SandboxContextFields) {
     this.workdir = fields.workdir;
@@ -43,6 +52,7 @@ export class SandboxContext {
     this.shellEnabled = fields.shellEnabled;
     if (fields.project_slug) this.project_slug = fields.project_slug;
     if (fields.brief_id) this.brief_id = fields.brief_id;
+    if (fields.signal) this.signal = fields.signal;
     Object.freeze(this);
   }
 
@@ -52,4 +62,29 @@ export class SandboxContext {
   static _create(fields: SandboxContextFields): SandboxContext {
     return new SandboxContext(fields);
   }
+
+  // v0.10.1: produce a sibling context that carries the given AbortSignal.
+  // Used by the runtime to attach a per-call cancellation signal without
+  // mutating the frozen original. Runtime-internal; not re-exported.
+  _withSignal(signal: AbortSignal): SandboxContext {
+    return new SandboxContext({
+      workdir: this.workdir,
+      defaultTimeoutMs: this.defaultTimeoutMs,
+      defaultMaxOutputBytes: this.defaultMaxOutputBytes,
+      httpAllowlist: this.httpAllowlist,
+      shellEnabled: this.shellEnabled,
+      project_slug: this.project_slug,
+      brief_id: this.brief_id,
+      signal,
+    });
+  }
 }
+
+// v0.10.1: shared error code for tool results that returned because the
+// runtime fired ctx.signal mid-execution. Distinct from TIMEOUT (per-tool
+// hard deadline) and ABORTED (subprocess-level termination signals).
+export const TOOL_CANCELLED_ERROR_CODE = "CANCELLED";
+
+// v0.10.1: shared marker text included in cancelled tool results so the
+// model and the trace recognize the same shape across all native tools.
+export const TOOL_CANCELLED_MESSAGE = "Tool call cancelled by operator.";

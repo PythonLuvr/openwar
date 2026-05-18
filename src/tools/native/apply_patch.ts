@@ -13,11 +13,12 @@
 //   - Rename/copy headers (treat as a write to the +++ path)
 //   - Git extended headers beyond the standard ---/+++ pair
 
-import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { ToolDefinition, ToolCall, ToolResult, ToolExecutionContext, ToolExecutor } from "../types.js";
 import { resolvePathInWorkdir, PathEscapeError } from "../../sandbox/workdir.js";
+import { isAborted, cancelledResult } from "./_cancellation.js";
 
 export const APPLY_PATCH_DEFINITION: ToolDefinition = {
   name: "apply_patch",
@@ -156,20 +157,48 @@ function applyHunk(input: string[], hunk: Hunk): string[] {
   return [...input.slice(0, start), ...postImage, ...input.slice(start + preImage.length)];
 }
 
-async function readFileOrEmpty(path: string): Promise<string> {
+async function atomicWrite(
+  path: string,
+  content: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.openwar-tmp-${randomBytes(6).toString("hex")}`;
   try {
-    return await readFile(path, "utf8");
+    await writeFile(tmp, content, { encoding: "utf8", signal });
+    if (isAborted(signal)) {
+      await unlink(tmp).catch(() => {});
+      const err = new Error("aborted");
+      (err as NodeJS.ErrnoException).name = "AbortError";
+      throw err;
+    }
+    await rename(tmp, path);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+    await unlink(tmp).catch(() => {});
     throw err;
   }
 }
 
-async function atomicWrite(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.openwar-tmp-${randomBytes(6).toString("hex")}`;
-  await writeFile(tmp, content, "utf8");
-  await rename(tmp, path);
+// v0.10.1: roll one file back to a captured pre-image. If pre-image is null,
+// the file did not exist before the patch and we delete it. Used by the
+// cancellation rollback path so a half-applied multi-file patch leaves the
+// tree in its pre-call state. Best-effort: a fs error during rollback is
+// surfaced in the cancellation message but does not throw.
+async function rollbackFile(
+  path: string,
+  preImage: string | null,
+): Promise<string | null> {
+  try {
+    if (preImage === null) {
+      // File did not exist pre-patch. Remove the written file if it landed.
+      try { await unlink(path); } catch { /* may not exist */ }
+      return null;
+    }
+    await writeFile(path, preImage, "utf8");
+    return null;
+  } catch (err) {
+    return `${path}: ${(err as Error).message}`;
+  }
 }
 
 export const applyPatchExecutor: ToolExecutor = async (
@@ -187,6 +216,7 @@ export const applyPatchExecutor: ToolExecutor = async (
   }
 
   const start = Date.now();
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
   let files: FilePatch[];
   try {
     files = parseUnifiedDiff(parsed.diff);
@@ -199,11 +229,14 @@ export const applyPatchExecutor: ToolExecutor = async (
     };
   }
 
-  // First pass: compute the new content for every file in memory. If any
-  // hunk fails, abort without writing.
-  const planned: { path: string; content: string }[] = [];
+  // First pass: compute the new content for every file in memory. Capture
+  // pre-images alongside (null when the file did not exist) so the second
+  // pass can roll back on cancellation. If any hunk fails, abort without
+  // writing.
+  const planned: { path: string; content: string; preImage: string | null }[] = [];
   let hunksApplied = 0;
   for (const fp of files) {
+    if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
     let resolved: string;
     try {
       resolved = resolvePathInWorkdir(ctx.workdir, fp.newPath);
@@ -218,7 +251,14 @@ export const applyPatchExecutor: ToolExecutor = async (
       }
       throw err;
     }
-    const current = await readFileOrEmpty(resolved);
+    let preImage: string | null = null;
+    try {
+      preImage = await readFile(resolved, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") preImage = null;
+      else throw err;
+    }
+    const current = preImage ?? "";
     const inputLines = current === "" ? [] : current.split(/\r?\n/);
     // Common quirk: split on \n leaves an empty trailing element when input ends with newline.
     const hadTrailingNewline = current.endsWith("\n");
@@ -238,15 +278,45 @@ export const applyPatchExecutor: ToolExecutor = async (
       }
     }
     const outContent = working.join("\n") + (hadTrailingNewline || working.length > 0 ? "\n" : "");
-    planned.push({ path: resolved, content: outContent });
+    planned.push({ path: resolved, content: outContent, preImage });
   }
 
-  // Second pass: write everything. If any write fails, the partial state is
-  // visible but the atomic per-file rename prevents corrupted contents.
+  // Second pass: write everything. v0.10.1 rolls back on cancellation: if
+  // ctx.signal fires after some files have been written, restore those
+  // files from their captured pre-images so the tree is back to its
+  // pre-call state. If any write fails (not cancellation), the partial
+  // state is visible but per-file atomic rename prevented corrupted
+  // contents.
+  const written: typeof planned = [];
   for (const p of planned) {
+    if (isAborted(ctx.signal)) {
+      // Cancellation before this file's write. Roll back any earlier
+      // writes from this run.
+      const errors: string[] = [];
+      for (const w of written.reverse()) {
+        const e = await rollbackFile(w.path, w.preImage);
+        if (e) errors.push(e);
+      }
+      const note = errors.length > 0
+        ? `Rolled back ${written.length} file(s) with ${errors.length} rollback error(s): ${errors.join("; ")}`
+        : `Rolled back ${written.length} file(s) cleanly.`;
+      return cancelledResult(call, note, start);
+    }
     try {
-      await atomicWrite(p.path, p.content);
+      await atomicWrite(p.path, p.content, ctx.signal);
+      written.push(p);
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).name === "AbortError" || isAborted(ctx.signal)) {
+        const errors: string[] = [];
+        for (const w of written.reverse()) {
+          const e = await rollbackFile(w.path, w.preImage);
+          if (e) errors.push(e);
+        }
+        const note = errors.length > 0
+          ? `Rolled back ${written.length} file(s) with ${errors.length} rollback error(s): ${errors.join("; ")}`
+          : `Rolled back ${written.length} file(s) cleanly.`;
+        return cancelledResult(call, note, start);
+      }
       return {
         call_id: call.id,
         success: false,

@@ -15,6 +15,7 @@ import type {
   ToolExecutor,
 } from "../types.js";
 import { appendMemoryEntry, MEMORY_CATEGORIES, type MemoryCategory } from "../../state/memory.js";
+import { isAborted, cancelledResult } from "./_cancellation.js";
 
 export const WRITE_PROJECT_MEMORY_DEFINITION: ToolDefinition = {
   name: "write_project_memory",
@@ -128,6 +129,7 @@ export const writeProjectMemoryExecutor: ToolExecutor = async (
     };
   }
   const start = Date.now();
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
   // Strip `id`, `at`, `category` if the caller passed them; we set those.
   const { id: _id, at: _at, category: _cat, brief_id: providedBriefId, metadata, ...rest } = parsed.entry as Record<string, unknown>;
   void _id; void _at; void _cat;

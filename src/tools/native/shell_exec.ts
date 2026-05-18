@@ -6,10 +6,15 @@ import { platform } from "node:os";
 import type { ToolDefinition, ToolCall, ToolResult, ToolExecutionContext, ToolExecutor } from "../types.js";
 import { resolvePathInWorkdir, PathEscapeError } from "../../sandbox/workdir.js";
 import { capStream } from "../../sandbox/output-cap.js";
+import { cancelledResult, isAborted } from "./_cancellation.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 300_000;
 const KILL_GRACE_MS = 2000;
+// v0.10.1: operator cancellation gets a longer SIGTERM-to-SIGKILL window
+// than the timeout path so well-behaved children have time to clean up
+// (close file handles, flush logs, release locks). Matches Squire's pattern.
+const CANCEL_GRACE_MS = 3000;
 
 export const SHELL_EXEC_DEFINITION: ToolDefinition = {
   name: "shell_exec",
@@ -123,6 +128,8 @@ export const shellExecExecutor: ToolExecutor = async (
   const args = shellArgs(shell, parsed.cmd);
   const maxOut = ctx.defaultMaxOutputBytes;
 
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
+
   return new Promise<ToolResult>((resolve) => {
     let child;
     try {
@@ -139,6 +146,10 @@ export const shellExecExecutor: ToolExecutor = async (
 
     let killed = false;
     let killSignal: string | undefined;
+    // v0.10.1: discriminator between "killed by internal timeout" and
+    // "killed by operator cancel". The close handler reads this to pick
+    // the cancelled vs timeout result shape.
+    let cancelledByOperator = false;
     const sigtermTimer = setTimeout(() => {
       killed = true;
       killSignal = "SIGTERM";
@@ -154,14 +165,51 @@ export const shellExecExecutor: ToolExecutor = async (
     const stdoutPromise = capStream(child.stdout!, maxOut);
     const stderrPromise = capStream(child.stderr!, maxOut);
 
+    // v0.10.1: operator cancellation. SIGTERM with a longer grace window
+    // than the timeout path, then SIGKILL. The close handler will still
+    // fire and resolve once stdio drains; we leave it to read
+    // `cancelledByOperator` and build the cancelledResult shape there so
+    // both paths use the same drain semantics.
+    const onCancel = () => {
+      if (cancelledByOperator) return;
+      cancelledByOperator = true;
+      clearTimeout(sigtermTimer);
+      killSignal = "SIGTERM";
+      killChild(child, "soft");
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          killSignal = "SIGKILL";
+          killChild(child, "hard");
+        }
+      }, CANCEL_GRACE_MS);
+    };
+    if (ctx.signal) {
+      if (ctx.signal.aborted) onCancel();
+      else ctx.signal.addEventListener("abort", onCancel, { once: true });
+    }
+
     child.on("close", async (code, signal) => {
       clearTimeout(sigtermTimer);
+      if (ctx.signal) ctx.signal.removeEventListener("abort", onCancel);
       const [outRes, errRes] = await Promise.all([stdoutPromise, stderrPromise]);
       const truncated = outRes.truncated || errRes.truncated;
       const exitCode = code ?? -1;
+      const stdoutText = outRes.content.toString("utf8");
+      const stderrText = errRes.content.toString("utf8");
+
+      if (cancelledByOperator) {
+        // Partial output = stdout drained before kill; stderr appended in
+        // case the killed process logged a graceful-shutdown message.
+        const partial = stderrText
+          ? `${stdoutText}\n--- stderr ---\n${stderrText}`
+          : stdoutText;
+        resolve(cancelledResult(call, partial, start));
+        return;
+      }
+
       const result = {
-        stdout: outRes.content.toString("utf8"),
-        stderr: errRes.content.toString("utf8"),
+        stdout: stdoutText,
+        stderr: stderrText,
         exit_code: exitCode,
         signal: signal ?? killSignal,
         truncated,
@@ -186,6 +234,7 @@ export const shellExecExecutor: ToolExecutor = async (
 
     child.on("error", (err) => {
       clearTimeout(sigtermTimer);
+      if (ctx.signal) ctx.signal.removeEventListener("abort", onCancel);
       resolve({
         call_id: call.id,
         success: false,

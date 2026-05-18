@@ -5,6 +5,7 @@ import { URL } from "node:url";
 import type { ToolDefinition, ToolCall, ToolResult, ToolExecutionContext, ToolExecutor } from "../types.js";
 import { isHostAllowed } from "../../sandbox/host-allowlist.js";
 import { withTimeout, TimeoutError } from "../../sandbox/timeout.js";
+import { isAborted, cancelledResult } from "./_cancellation.js";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BYTES = 5_000_000;
@@ -114,7 +115,20 @@ export const httpFetchExecutor: ToolExecutor = async (
   const maxBytes = parsed.max_bytes ?? DEFAULT_MAX_BYTES;
   const method = (parsed.method ?? "GET").toUpperCase();
 
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
+
+  // v0.10.1: per-call AbortController combines the existing timeout/truncation
+  // path with the runtime's ctx.signal. If the operator cancels mid-fetch,
+  // ctx.signal fires, we forward to ac.abort(), and the in-flight fetch /
+  // chunk reader bails with an AbortError. Whatever the reader already
+  // accumulated becomes the partial_output.
   const ac = new AbortController();
+  const forwardCancel = () => ac.abort();
+  ctx.signal?.addEventListener("abort", forwardCancel, { once: true });
+
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const partialText = () => Buffer.concat(chunks.map(c => Buffer.from(c))).toString("utf8");
   try {
     const fetchPromise = fetch(parsed.url, {
       method,
@@ -128,11 +142,13 @@ export const httpFetchExecutor: ToolExecutor = async (
     // Truncate body to max_bytes. fetch().text() loads the whole body, so we
     // stream via .arrayBuffer() approach with manual cap via reader.
     const reader = res.body?.getReader();
-    let received = 0;
     let truncated = false;
-    const chunks: Uint8Array[] = [];
     if (reader) {
       while (true) {
+        if (isAborted(ctx.signal)) {
+          try { await reader.cancel(); } catch { /* best-effort */ }
+          return cancelledResult(call, partialText(), start);
+        }
         const { done, value } = await reader.read();
         if (done) break;
         if (received >= maxBytes) {
@@ -151,7 +167,7 @@ export const httpFetchExecutor: ToolExecutor = async (
         received += value.length;
       }
     }
-    const body = Buffer.concat(chunks.map(c => Buffer.from(c))).toString("utf8");
+    const body = partialText();
     const headers: Record<string, string> = {};
     res.headers.forEach((v, k) => { headers[k] = v; });
 
@@ -162,6 +178,12 @@ export const httpFetchExecutor: ToolExecutor = async (
       meta: { duration_ms: Date.now() - start, bytes: received, truncated },
     };
   } catch (err) {
+    // Operator-initiated cancel: surface as cancellation, not as a generic
+    // fetch error. ctx.signal aborting also aborts ac, so an AbortError here
+    // could be either source; ctx.signal is the discriminator.
+    if (isAborted(ctx.signal)) {
+      return cancelledResult(call, partialText(), start);
+    }
     if (err instanceof TimeoutError) {
       ac.abort();
       return {
@@ -178,6 +200,8 @@ export const httpFetchExecutor: ToolExecutor = async (
       content: `HTTP error: ${message}`,
       error: { code: "FETCH_ERROR", message },
     };
+  } finally {
+    ctx.signal?.removeEventListener("abort", forwardCancel);
   }
 };
 

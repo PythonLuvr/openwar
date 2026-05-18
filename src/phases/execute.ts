@@ -16,6 +16,8 @@ import { snapshotWithConsultations } from "../detectors/index.js";
 import { checkAuthorization } from "../auth/check.js";
 import { Tracer, nullTracer } from "../state/trace.js";
 import type { DetectorSensitivityMap } from "../state/learned-profile.js";
+import type { ToolCallRegistry } from "../runtime/cancellation.js";
+import { TOOL_CANCELLED_ERROR_CODE } from "../sandbox/types.js";
 
 export interface ExecuteOpts {
   brief: Brief;
@@ -44,6 +46,12 @@ export interface ExecuteOpts {
   // Threaded into snapshot() so detectors honor the overrides. Optional
   // because most runs do not set learned_profile in frontmatter.
   detectorSensitivities?: DetectorSensitivityMap;
+  // v0.10.1: per-tool-call cancellation registry. When present, every
+  // executor invocation registers itself with the registry so external
+  // callers (chat REPL, RunOptions.signal forwarding) can cancel mid-call.
+  // Optional so existing test callers and the coordinator's inner adapter
+  // path work unchanged.
+  cancellationRegistry?: ToolCallRegistry;
 }
 
 export interface ExecuteResult {
@@ -181,7 +189,24 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
           at: new Date().toISOString(),
         });
         const toolStartMs = Date.now();
-        const result = await executor(call, opts.sandbox!);
+        // v0.10.1: register the call with the cancellation registry (if
+        // any) and derive a per-call sandbox carrying the registry's
+        // AbortSignal. Tools read ctx.signal to honor cancellation; the
+        // dispatcher inspects the returned ToolResult.error.code to
+        // emit tool_cancelled and route a structured cancelled result
+        // back to the model.
+        const registry = opts.cancellationRegistry;
+        const ac = registry?.begin(call.id, call.name);
+        const callCtx = ac
+          ? opts.sandbox!._withSignal(ac.signal)
+          : opts.sandbox!;
+        let result;
+        try {
+          result = await executor(call, callCtx);
+        } finally {
+          registry?.end(call.id);
+        }
+        const cancelled = result.error?.code === TOOL_CANCELLED_ERROR_CODE;
         const round: ToolResultForRound = {
           call_id: call.id,
           content: result.content,
@@ -190,15 +215,40 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
         priorToolResults.push(round);
         opts.onToolCall?.(call, round);
         const durationMs = result.meta?.duration_ms ?? Date.now() - toolStartMs;
-        tracer.emit({
-          type: "tool_result",
-          call_id: call.id,
-          success: result.success,
-          duration_ms: durationMs,
-          bytes: Buffer.byteLength(result.content ?? "", "utf8"),
-          at: new Date().toISOString(),
-        });
-        io.write(`  ↳ ${result.success ? "ok" : "error"} (${durationMs}ms)\n`);
+        if (cancelled) {
+          // v0.10.1: distinct trace event for operator cancellation. The
+          // tool_result event is NOT emitted for cancelled calls; the
+          // model still receives the cancellation tool-result via the
+          // ordinary prior_tool_results channel above.
+          tracer.emit({
+            type: "tool_cancelled",
+            call_id: call.id,
+            tool_name: call.name,
+            cancellation_source: registry?.cancellationSource ?? "operator_signal",
+            partial_output: typeof result.meta?.bytes === "number"
+              ? result.content
+              : result.content,
+            at: new Date().toISOString(),
+          });
+          registry?.emit({
+            call_id: call.id,
+            tool_name: call.name,
+            cancellation_source: registry?.cancellationSource ?? "operator_signal",
+            partial_output: result.content,
+            at: new Date().toISOString(),
+          });
+          io.write(`  ↳ cancelled (${durationMs}ms)\n`);
+        } else {
+          tracer.emit({
+            type: "tool_result",
+            call_id: call.id,
+            success: result.success,
+            duration_ms: durationMs,
+            bytes: Buffer.byteLength(result.content ?? "", "utf8"),
+            at: new Date().toISOString(),
+          });
+          io.write(`  ↳ ${result.success ? "ok" : "error"} (${durationMs}ms)\n`);
+        }
       }
 
       // Persist the round in transcript history as assistant + tool messages.

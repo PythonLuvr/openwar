@@ -61,6 +61,8 @@ import { aggregateResults, type SubtaskOutcome } from "./result-aggregator.js";
 import type { SandboxContext } from "../sandbox/types.js";
 import type { ToolExecutor } from "../tools/types.js";
 import { checkAuthorizationWithRole } from "../auth/check.js";
+import type { ToolCallRegistry } from "../runtime/cancellation.js";
+import { TOOL_CANCELLED_ERROR_CODE } from "../sandbox/types.js";
 
 export interface RunCoordinatorOptions {
   brief: Brief;
@@ -97,6 +99,12 @@ export interface RunCoordinatorOptions {
   sessionId: string;
   // Tracker of all destructive approvals that occurred during this run.
   onApproval: (a: { action: string; approved: boolean; session_categories?: string[] }) => void;
+  // v0.10.1: per-tool-call cancellation registry. Optional; when present,
+  // every executor dispatch inside the coordinator registers itself so
+  // operator cancellation (chat REPL ctrl-c, RunOptions.signal) can abort
+  // mid-call. Cancellation ends the current role's turn; the coordinator
+  // does not auto-retry (per the brief).
+  cancellationRegistry?: ToolCallRegistry;
 }
 
 export interface CoordinatorRunResult extends Omit<RunResult, "session_id"> {
@@ -273,6 +281,7 @@ export async function runCoordinator(
         onApproval: opts.onApproval,
         budgets: opts.budgets,
         signal,
+        ...(opts.cancellationRegistry ? { cancellationRegistry: opts.cancellationRegistry } : {}),
       });
       if (sig.handoff) {
         outcomes.set(sub.id, {
@@ -475,6 +484,7 @@ async function runExecuteState(args: {
   onApproval: RunCoordinatorOptions["onApproval"];
   budgets: Budgets;
   signal?: AbortSignal;
+  cancellationRegistry?: ToolCallRegistry;
 }): Promise<ExecuteStateResult> {
   const role = getRole("executor");
   if (!role) {
@@ -610,8 +620,22 @@ async function runExecuteState(args: {
         });
         continue;
       }
-      const result = await executor(call, args.sandbox);
+      // v0.10.1: register the call with the cancellation registry (if
+      // any) and derive a per-call sandbox carrying the registry's
+      // AbortSignal. If cancelled, the role's turn ends with the
+      // cancelled tool-result; the coordinator decides whether to
+      // retry, hand off, or stop the run (no auto-retry).
+      const registry = args.cancellationRegistry;
+      const ac = registry?.begin(call.id, call.name);
+      const callCtx = ac ? args.sandbox._withSignal(ac.signal) : args.sandbox;
+      let result;
+      try {
+        result = await executor(call, callCtx);
+      } finally {
+        registry?.end(call.id);
+      }
       recordToolCall(args.cost, args.subtask.id);
+      const cancelled = result.error?.code === TOOL_CANCELLED_ERROR_CODE;
       recordedCalls.push({
         call_id: call.id,
         name: call.name,
@@ -622,10 +646,16 @@ async function runExecuteState(args: {
       });
       history.push({
         role: "user",
-        content: `[tool_result ${call.id}${result.success ? "" : " (error)"}]\n${result.content}`,
+        content: `[tool_result ${call.id}${cancelled ? " (cancelled)" : result.success ? "" : " (error)"}]\n${result.content}`,
         at: new Date().toISOString(),
         meta: { phase: "execute", orch_role: "executor", subtask_id: args.subtask.id },
       });
+      if (cancelled) {
+        // End the executor's turn immediately. Per the brief: cancellation
+        // does NOT fire Phase 3 and does NOT auto-retry; the coordinator
+        // sees the cancelled tool-result in the history and proceeds.
+        break;
+      }
     }
   }
 

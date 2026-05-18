@@ -332,6 +332,20 @@ export interface RunOptions {
   // `openwar inspect` can show the originating chat. Undefined for runs
   // launched via `openwar run` directly.
   chatId?: string;
+  // v0.10.1: caller-provided abort signal. When fired, the runner cancels
+  // the in-flight tool call at the next dispatch boundary, surfaces a
+  // structured tool-result with status="cancelled" to the model, emits a
+  // `tool_cancelled` trace event, and lets the phase machine continue.
+  // The signal does NOT abort the entire run; programs that want full
+  // shutdown should also stop calling Session.continue() afterward.
+  signal?: AbortSignal;
+  // v0.10.1: callback invoked synchronously once the runner has constructed
+  // the live Session handle, before the phase machine starts. Callers that
+  // want to drive cancellation programmatically (chat REPL, integrators)
+  // stash the handle here and call `session.cancelCurrentToolCall()` from
+  // their own keypress / signal / RPC layer. Omitted callers see no
+  // behavior change.
+  onSession?: (session: Session) => void;
 }
 
 export interface RunResult {
@@ -343,6 +357,42 @@ export interface RunResult {
   halted: boolean;
   halt_reason?: string;
   messages: Message[];
+}
+
+// ---------- v0.10.1 cancellation surface ----------
+//
+// `SessionEvent` is the live observation surface for runtime events that
+// integrators (chat REPL, War Room, external programs) care about during an
+// active session. v0.10.1 introduces it with a single variant; future minor
+// releases extend the union without breaking. Distinct from `TraceEvent`
+// (persisted to disk) and `CoordinatorEvent` (multi-agent only).
+
+export type CancellationSource = "operator_signal" | "timeout" | "runtime_shutdown";
+
+export interface ToolCancellation {
+  call_id: string;
+  tool_name: string;
+  cancellation_source: CancellationSource;
+  // What the tool produced before the abort. Empty for tools that buffer
+  // output until completion (e.g., apply_patch). Streaming tools (e.g.,
+  // shell_exec) report the bytes that arrived before the cancel fired.
+  partial_output: string;
+  at: string;
+}
+
+export type SessionEvent =
+  | { type: "tool_cancelled"; payload: ToolCancellation };
+
+// A live handle on an active run. Returned alongside `RunResult` for callers
+// that need to interact with a run in progress (most often: cancel an
+// in-flight tool call from a separate keystroke handler). Most callers of
+// `run()` will not need this; the chat REPL is the primary consumer.
+export interface Session {
+  // Cancel the in-flight tool call, if any. Resolves true once the tool has
+  // fully aborted (subprocess exited, fetch rejected, partial-write rolled
+  // back). Resolves false synchronously if no tool call is currently active.
+  // Safe to call repeatedly; subsequent calls with no active call no-op.
+  cancelCurrentToolCall(): Promise<boolean>;
 }
 
 export interface RunnerIO {

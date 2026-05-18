@@ -5,6 +5,7 @@ import { readdir, stat, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { ToolDefinition, ToolCall, ToolResult, ToolExecutionContext, ToolExecutor } from "../types.js";
 import { resolveAndRealpathInWorkdir, PathEscapeError } from "../../sandbox/workdir.js";
+import { isAborted, cancelledResult, CancelledError } from "./_cancellation.js";
 
 const DEFAULT_SKIP_DIRS = new Set([
   ".git",
@@ -105,7 +106,9 @@ async function walk(
   glob: RegExp | null,
   ignore: string[],
   out: Entry[],
+  signal: AbortSignal | undefined,
 ): Promise<void> {
+  if (isAborted(signal)) throw new CancelledError();
   let entries;
   try {
     entries = await readdir(currentAbs, { withFileTypes: true });
@@ -113,6 +116,7 @@ async function walk(
     return;
   }
   for (const e of entries) {
+    if (isAborted(signal)) throw new CancelledError();
     if (shouldSkip(e.name, ignore)) continue;
     const abs = join(currentAbs, e.name);
     const rel = relative(rootAbs, abs);
@@ -122,7 +126,7 @@ async function walk(
         out.push({ name: displayName, type: "directory" });
       }
       if (depth < maxDepth) {
-        await walk(rootAbs, abs, depth + 1, maxDepth, glob, ignore, out);
+        await walk(rootAbs, abs, depth + 1, maxDepth, glob, ignore, out, signal);
       }
     } else if (e.isFile()) {
       if (!glob || glob.test(e.name)) {
@@ -151,6 +155,7 @@ export const listDirExecutor: ToolExecutor = async (
     };
   }
   const start = Date.now();
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
   try {
     const resolved = await resolveAndRealpathInWorkdir(ctx.workdir, parsed.path);
     const st = await stat(resolved);
@@ -166,7 +171,7 @@ export const listDirExecutor: ToolExecutor = async (
     const glob = parsed.glob ? globToRegExp(parsed.glob) : null;
     const ignore = await loadIgnore(ctx.workdir);
     const out: Entry[] = [];
-    await walk(resolved, resolved, 1, maxDepth, glob, ignore, out);
+    await walk(resolved, resolved, 1, maxDepth, glob, ignore, out, ctx.signal);
     return {
       call_id: call.id,
       success: true,
@@ -174,6 +179,9 @@ export const listDirExecutor: ToolExecutor = async (
       meta: { duration_ms: Date.now() - start, bytes: out.length },
     };
   } catch (err) {
+    if (err instanceof CancelledError) {
+      return cancelledResult(call, "", start);
+    }
     if (err instanceof PathEscapeError) {
       return {
         call_id: call.id,

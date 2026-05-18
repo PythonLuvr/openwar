@@ -2,11 +2,12 @@
 // Atomic via tmp + rename for overwrite; append uses appendFile.
 // Creates parent directories if missing.
 
-import { writeFile, appendFile, rename, mkdir, stat } from "node:fs/promises";
+import { writeFile, appendFile, rename, mkdir, stat, unlink } from "node:fs/promises";
 import { dirname, basename } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { ToolDefinition, ToolCall, ToolResult, ToolExecutionContext, ToolExecutor } from "../types.js";
 import { resolvePathInWorkdir, PathEscapeError } from "../../sandbox/workdir.js";
+import { isAborted, cancelledResult } from "./_cancellation.js";
 
 export const WRITE_FILE_DEFINITION: ToolDefinition = {
   name: "write_file",
@@ -56,10 +57,27 @@ async function ensureParents(path: string): Promise<boolean> {
   }
 }
 
-async function atomicWrite(path: string, content: string): Promise<void> {
+async function atomicWrite(
+  path: string,
+  content: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   const tmp = `${path}.openwar-tmp-${randomBytes(6).toString("hex")}`;
-  await writeFile(tmp, content, "utf8");
-  await rename(tmp, path);
+  try {
+    await writeFile(tmp, content, { encoding: "utf8", signal });
+    if (isAborted(signal)) {
+      await unlink(tmp).catch(() => {});
+      const err = new Error("aborted");
+      (err as NodeJS.ErrnoException).name = "AbortError";
+      throw err;
+    }
+    await rename(tmp, path);
+  } catch (err) {
+    // Cleanup orphan tmp on any failure path. unlink errors are swallowed
+    // (the tmp may never have been created, or perms revoked since).
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
 }
 
 export const writeFileExecutor: ToolExecutor = async (
@@ -76,13 +94,20 @@ export const writeFileExecutor: ToolExecutor = async (
     };
   }
   const start = Date.now();
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
   try {
     const resolved = resolvePathInWorkdir(ctx.workdir, parsed.path);
     const createdParents = await ensureParents(resolved);
+    if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
     if (parsed.append) {
-      await appendFile(resolved, parsed.content, "utf8");
+      // @types/node 20.x omits `signal` from the appendFile options shape, but
+      // Node 20+ honors it at runtime. Cast through the supported overload.
+      await appendFile(resolved, parsed.content, {
+        encoding: "utf8",
+        signal: ctx.signal,
+      } as Parameters<typeof appendFile>[2]);
     } else {
-      await atomicWrite(resolved, parsed.content);
+      await atomicWrite(resolved, parsed.content, ctx.signal);
     }
     const bytes = Buffer.byteLength(parsed.content, "utf8");
     return {
@@ -92,6 +117,9 @@ export const writeFileExecutor: ToolExecutor = async (
       meta: { duration_ms: Date.now() - start, bytes },
     };
   } catch (err) {
+    if ((err as NodeJS.ErrnoException).name === "AbortError" || isAborted(ctx.signal)) {
+      return cancelledResult(call, "", start);
+    }
     if (err instanceof PathEscapeError) {
       return {
         call_id: call.id,

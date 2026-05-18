@@ -1,6 +1,15 @@
 // Public library surface. War Room and other integrators import from here.
 
 export * from "./types.js";
+// v0.10.1: explicit re-exports of the cancellation surface for discoverability.
+// (Also already covered by `export *` above; named here so editor "Go to
+// definition" lands here for integrators.)
+export type {
+  CancellationSource,
+  ToolCancellation,
+  SessionEvent,
+  Session,
+} from "./types.js";
 export { parseBrief, validateBrief, renderBriefForAgent, generateBriefId } from "./brief.js";
 export { run } from "./runner.js";
 export { loadFrameworkDoc } from "./framework.js";

@@ -23,6 +23,7 @@ import type {
   ToolExecutor,
 } from "../types.js";
 import { readMemory, MEMORY_CATEGORIES, type MemoryCategory, type MemoryEntry } from "../../state/memory.js";
+import { isAborted, cancelledResult } from "./_cancellation.js";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -146,9 +147,8 @@ async function summarizeCategory(
 
 export const listProjectMemoryExecutor: ToolExecutor = async (
   call: ToolCall,
-  _ctx: ToolExecutionContext,
+  ctx: ToolExecutionContext,
 ): Promise<ToolResult> => {
-  void _ctx;
   const parsed = parseArgs(call);
   if ("error" in parsed) {
     return {
@@ -159,6 +159,7 @@ export const listProjectMemoryExecutor: ToolExecutor = async (
     };
   }
   const start = Date.now();
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
   const requestedLimit = parsed.limit ?? DEFAULT_LIMIT;
   const cappedLimit = requestedLimit === 0
     ? MAX_LIMIT
@@ -170,6 +171,7 @@ export const listProjectMemoryExecutor: ToolExecutor = async (
 
   const summaries: CategorySummary[] = [];
   for (const cat of categories) {
+    if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
     summaries.push(await summarizeCategory(parsed.project, cat, parsed.since, cappedLimit));
   }
 

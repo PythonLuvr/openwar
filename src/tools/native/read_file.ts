@@ -4,6 +4,7 @@
 import { readFile, stat } from "node:fs/promises";
 import type { ToolDefinition, ToolCall, ToolResult, ToolExecutionContext, ToolExecutor } from "../types.js";
 import { resolveAndRealpathInWorkdir, PathEscapeError } from "../../sandbox/workdir.js";
+import { isAborted, cancelledResult } from "./_cancellation.js";
 
 const DEFAULT_MAX_BYTES = 1_000_000;
 
@@ -62,8 +63,10 @@ export const readFileExecutor: ToolExecutor = async (
   }
   const maxBytes = parsed.max_bytes ?? DEFAULT_MAX_BYTES;
   const start = Date.now();
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
   try {
     const resolved = await resolveAndRealpathInWorkdir(ctx.workdir, parsed.path);
+    if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
     const st = await stat(resolved);
     if (st.isDirectory()) {
       return {
@@ -73,7 +76,7 @@ export const readFileExecutor: ToolExecutor = async (
         error: { code: "EISDIR", message: "path is a directory" },
       };
     }
-    const buf = await readFile(resolved);
+    const buf = await readFile(resolved, { signal: ctx.signal });
     const truncated = buf.length > maxBytes;
     const content = truncated ? buf.subarray(0, maxBytes).toString("utf8") : buf.toString("utf8");
     return {
@@ -83,6 +86,9 @@ export const readFileExecutor: ToolExecutor = async (
       meta: { duration_ms: Date.now() - start, bytes: content.length, truncated },
     };
   } catch (err) {
+    if ((err as NodeJS.ErrnoException).name === "AbortError" || isAborted(ctx.signal)) {
+      return cancelledResult(call, "", start);
+    }
     if (err instanceof PathEscapeError) {
       return {
         call_id: call.id,

@@ -24,6 +24,7 @@ import type {
   ToolExecutor,
 } from "../types.js";
 import { readMemory, MEMORY_CATEGORIES, type MemoryCategory } from "../../state/memory.js";
+import { isAborted, cancelledResult } from "./_cancellation.js";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
@@ -116,6 +117,7 @@ export const readProjectMemoryExecutor: ToolExecutor = async (
     };
   }
   const start = Date.now();
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
   // Cap the limit at MAX_LIMIT regardless of caller intent; unbounded reads
   // would blow up token cost on a large memory store.
   const requestedLimit = parsed.limit ?? DEFAULT_LIMIT;
@@ -131,6 +133,7 @@ export const readProjectMemoryExecutor: ToolExecutor = async (
     ...(parsed.query !== undefined && { query: parsed.query }),
     limit: parsed.id ? MAX_LIMIT : cappedLimit,
   });
+  if (isAborted(ctx.signal)) return cancelledResult(call, "", start);
 
   let entries = memoryResult.entries;
   if (parsed.id) {
