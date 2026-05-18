@@ -8,6 +8,7 @@ import {
   listKnownBridgedClis,
   buildMcpConfigFile,
 } from "../../src/mcp/bridged-cli-registry.js";
+void buildMcpConfigFile; // satisfy ts-strict when not all tests use it
 
 test("registry: Claude Code resolves via basename, case-insensitive, ext-stripped", () => {
   for (const binary of ["claude", "claude.cmd", "claude.exe", "CLAUDE.CMD", "C:\\path\\claude.cmd"]) {
@@ -98,9 +99,61 @@ test("registry: listKnownBridgedClis includes both Claude Code and Gemini", () =
   assert.ok(keys.includes("gemini"));
 });
 
-test("registry: Codex remains on the fallback path in v0.7.0 (deferred to v0.7.1+)", () => {
+// v0.7.1: Codex CLI is now in the registry.
+
+test("registry: Codex CLI resolves via basename, case-insensitive", () => {
+  for (const binary of ["codex", "codex.cmd", "CODEX", "C:\\bin\\codex.exe", "/usr/local/bin/codex"]) {
+    const s = resolveBridgedCliStrategy(binary);
+    assert.equal(s.display_name, "Codex CLI", `expected Codex CLI for "${binary}"`);
+    assert.equal(s.mcp_supported, true);
+  }
+});
+
+test("registry: Codex configPath resolves to ~/.codex/config.toml on the operator's home", () => {
   const s = resolveBridgedCliStrategy("codex");
-  assert.equal(s.mcp_supported, false);
+  const path = s.configPath!({ workdir: "/anywhere", briefId: "B1", defaultTmpPath: "/tmp/x.json" });
+  assert.match(path, /\.codex[\\/]config\.toml$/);
+});
+
+test("registry: Codex persists config across runs (no cleanup)", () => {
+  const s = resolveBridgedCliStrategy("codex");
+  assert.equal(s.cleanupConfigFile, false);
+});
+
+test("registry: Codex auto-discovers config (no --mcp-config flag injected)", () => {
+  const s = resolveBridgedCliStrategy("codex");
+  const args = s.buildArgs({ configPath: "/somewhere/config.toml", serverCommand: "node", serverArgs: [] });
+  assert.deepEqual(args, [], "Codex auto-discovers from ~/.codex/config.toml; no CLI args needed");
+});
+
+test("registry: Codex serializeConfig emits TOML (not JSON) with the canonical MCP shape", () => {
+  const s = resolveBridgedCliStrategy("codex");
+  assert.ok(s.serializeConfig, "Codex strategy must override serializeConfig");
+  const content = buildMcpConfigFile({
+    serverCommand: "node",
+    serverArgs: ["/path/to/openwar", "mcp-serve"],
+  });
+  const out = s.serializeConfig!(content);
+  // TOML markers, not JSON.
+  assert.match(out, /\[mcp_servers\.openwar\]/);
+  assert.match(out, /command = "node"/);
+  assert.match(out, /args = \["\/path\/to\/openwar", "mcp-serve"\]/);
+  // No JSON braces around the top level.
+  assert.ok(!out.trimStart().startsWith("{"), "TOML output should not start with {");
+});
+
+test("registry: Codex uses mergeIntoExisting (preserves operator hand-edits)", () => {
+  const s = resolveBridgedCliStrategy("codex");
+  assert.equal(s.mergeIntoExisting, true);
+  assert.equal(s.mergeSectionHeader, "mcp_servers.openwar");
+});
+
+test("registry: listKnownBridgedClis includes Claude Code, Gemini CLI, AND Codex CLI", () => {
+  const known = listKnownBridgedClis();
+  const keys = known.map((k) => k.key);
+  assert.ok(keys.includes("claude"));
+  assert.ok(keys.includes("gemini"));
+  assert.ok(keys.includes("codex"));
 });
 
 test("registry: aider remains on the fallback path (no native MCP)", () => {

@@ -82,6 +82,22 @@ cli:
 
 Set `framework_prefix: false` (or pass `--cli-no-framework`) when the CLI already has OpenWar in its own system prompt. For Claude Code with `openwar.md` already in CLAUDE.md, the prepend is redundant and wasteful.
 
+### MCP-server-mode and the bridged-CLI registry (v0.7+)
+
+When a brief uses cli-bridge, OpenWar additionally exposes its eight native tools (`read_file`, `write_file`, `list_dir`, `shell_exec`, `http_fetch`, `apply_patch`, `read_project_memory`, `write_project_memory`) to the bridged CLI through standard MCP. The bridged agent can call any of them as `openwar:<tool_name>` and the runtime authorizes every call through the brief's `authorized_costs`.
+
+The runtime knows how to wire MCP forwarding for these bridged CLIs out of the box:
+
+| Binary basename | CLI | Config file | Wiring | Persists |
+|---|---|---|---|---|
+| `claude` | Claude Code | `<temp>/openwar-mcp-config-*.json` | `--mcp-config <path>` flag injection | cleaned up at session end |
+| `gemini` | Gemini CLI | `<workdir>/.gemini/settings.json` | auto-discovered | yes (no cleanup) |
+| `codex` | Codex CLI (v0.7.1+) | `~/.codex/config.toml` | auto-discovered, merged into existing TOML | yes (no cleanup) |
+
+Unknown binaries (aider, custom tools without native MCP support) hit a fallback: the OpenWar MCP config is still written to a temp JSON file, but no CLI args are injected. The runtime emits a startup warning so the operator can wire MCP manually for that CLI, or set `cli.mcp_forward: false` in the brief frontmatter to disable forwarding entirely and run the bridged CLI in its own tool sandbox.
+
+The Codex entry preserves operator hand-edits to other sections of `~/.codex/config.toml` (it reads the file, replaces or appends the `[mcp_servers.openwar]` block, leaves everything else untouched). Same model is expected to extend to other TOML-config CLIs in v0.7.2+.
+
 ### When to use cli-bridge vs an API adapter
 
 Use `cli-bridge` when:

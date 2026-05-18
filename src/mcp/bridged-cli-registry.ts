@@ -24,6 +24,8 @@
 // --cli-binary claude, --cli-binary claude.cmd, and absolute paths.
 
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { writeTomlConfig, type TomlConfig } from "./toml-writer.js";
 
 export interface ConfigPathContext {
   workdir: string;
@@ -57,6 +59,19 @@ export interface BridgedCliStrategy {
   // temp paths; false for known-location overrides where the operator may
   // want the config to persist for future runs.
   cleanupConfigFile?: boolean;
+  // v0.7.1: serialize the MCP config to the on-disk format the bridged CLI
+  // expects. Default (undefined) is JSON.stringify with two-space indent.
+  // Codex overrides to TOML because its config.toml is, well, TOML.
+  serializeConfig?(content: McpConfigFileContent): string;
+  // v0.7.1: when true, the runner reads the existing config file and merges
+  // the OpenWar MCP server section in (preserving other operator-authored
+  // sections) instead of overwriting. Used by Codex because operators may
+  // hand-edit other parts of ~/.codex/config.toml. Strategies that own a
+  // temp path or a dedicated subdir keep this false.
+  mergeIntoExisting?: boolean;
+  // v0.7.1: the merge step needs to know the section header to replace.
+  // Defaults to "mcp_servers.<serverName>" when omitted.
+  mergeSectionHeader?: string;
 }
 
 // Map of binary basename → strategy. Match is case-insensitive; .cmd / .bat /
@@ -81,7 +96,45 @@ const STRATEGIES = new Map<string, BridgedCliStrategy>([
     configPath: ({ workdir }) => join(workdir, ".gemini", "settings.json"),
     buildArgs: () => [],
   }],
+  // v0.7.1: Codex CLI. Reads MCP server config from ~/.codex/config.toml.
+  // TOML format requires the v0.7.1 hand-rolled serializer. The runner
+  // merges the [mcp_servers.openwar] section into any existing file rather
+  // than overwriting so operator hand-edits to other sections survive
+  // (Phase 0 pick (a) in the v0.7.1 brief). Codex auto-discovers; no CLI
+  // args needed. File persists across runs like Gemini.
+  ["codex", {
+    display_name: "Codex CLI",
+    mcp_supported: true,
+    writeConfigFile: true,
+    cleanupConfigFile: false,
+    configPath: () => join(homedir(), ".codex", "config.toml"),
+    buildArgs: () => [],
+    serializeConfig: (content) => writeTomlConfig(mcpConfigToToml(content)),
+    mergeIntoExisting: true,
+    mergeSectionHeader: "mcp_servers.openwar",
+  }],
 ]);
+
+// Convert the standard McpConfigFileContent (JSON-shaped, used by Claude
+// Code + Gemini) into the TomlConfig shape the writer accepts. v0.7.1 only
+// emits one section per call (the OpenWar entry under mcp_servers) because
+// that is the only section the strategy owns.
+function mcpConfigToToml(content: McpConfigFileContent): TomlConfig {
+  const sections: TomlConfig["sections"] = [];
+  for (const [serverName, server] of Object.entries(content.mcpServers)) {
+    const fields: TomlConfig["sections"][number]["fields"] = [
+      { key: "command", value: server.command },
+      { key: "args", value: server.args },
+    ];
+    if (server.env) {
+      for (const [k, v] of Object.entries(server.env)) {
+        fields.push({ key: `env.${k}`, value: v });
+      }
+    }
+    sections.push({ header: `mcp_servers.${serverName}`, fields });
+  }
+  return { sections };
+}
 
 // Fallback used when the binary is unknown. Writes the config file, does not
 // inject CLI args (we don't know how this CLI consumes config). Caller emits

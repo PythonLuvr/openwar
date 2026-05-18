@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import type { Brief, RunnerIO, ToolCallRecord } from "../types.js";
 import type { CliBridgeAdapter } from "../adapters/cli-bridge.js";
 import { resolveBridgedCliStrategy, buildMcpConfigFile } from "./bridged-cli-registry.js";
+import { upsertTomlSection } from "./toml-writer.js";
 
 export interface CliBridgeMcpSetup {
   enabled: boolean;
@@ -114,7 +115,27 @@ export async function setupCliBridgeMcpForwarding(
       serverArgs: [openwarBin, ...serverArgs],
     });
     await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, JSON.stringify(content, null, 2), "utf8");
+    // v0.7.1: per-strategy serializer (default JSON). Codex returns TOML.
+    const serialized = strategy.serializeConfig
+      ? strategy.serializeConfig(content)
+      : JSON.stringify(content, null, 2);
+    // v0.7.1: optional merge-into-existing. Codex sets this true so we
+    // don't clobber operator hand-edits to other sections of config.toml.
+    if (strategy.mergeIntoExisting && existsSync(configPath)) {
+      const existing = await readFile(configPath, "utf8");
+      const sectionHeader = strategy.mergeSectionHeader ?? "mcp_servers.openwar";
+      // The serialized output is one [section]\nkey=val\n... block. Strip
+      // the leading "[header]\n" so upsertTomlSection's body argument is
+      // just the field lines; the helper re-adds the header verbatim.
+      const headerLine = `[${sectionHeader}]\n`;
+      const body = serialized.startsWith(headerLine)
+        ? serialized.slice(headerLine.length).replace(/\n+$/, "")
+        : serialized.replace(/\n+$/, "");
+      const merged = upsertTomlSection(existing, sectionHeader, body);
+      await writeFile(configPath, merged, "utf8");
+    } else {
+      await writeFile(configPath, serialized, "utf8");
+    }
   }
 
   const cliArgs = strategy.buildArgs({

@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.1
+
+Codex CLI joins Claude Code and Gemini CLI in the v0.7.0 MCP-server-mode infrastructure. Brought up as v0.7.1 because Codex's TOML config format required a small hand-rolled serializer; deferred from v0.7.0 to keep that release focused on the architectural foundation.
+
+A Windows / macOS / Linux operator with Codex CLI installed can now run:
+
+```bash
+npx @pythonluvr/openwar run examples/cli-bridge-mcp-memory-brief.md \
+  --adapter cli-bridge \
+  --cli-binary codex
+```
+
+The runner writes `~/.codex/config.toml` with the OpenWar MCP server config, Codex discovers and consumes it, the bridged Codex session can call OpenWar's eight native tools through MCP. Same operator experience as Claude Code and Gemini CLI in v0.7.0.
+
+### Added
+
+- **`src/mcp/toml-writer.ts`**: hand-rolled TOML serializer scoped to MCP config shape only. Supports dotted section headers, string values, string array values. Escape rules cover every TOML 1.0 basic-string escape (`\b`, `\t`, `\n`, `\f`, `\r`, `\"`, `\\`, `\uXXXX` for non-printable Unicode). Public API is `writeTomlConfig(config: TomlConfig): string` plus `TomlConfig` type plus `upsertTomlSection(existing, header, body): string` for the read-modify-write merge path. Deliberately not a general-purpose TOML library: no integers, floats, booleans, dates, inline tables, multi-line strings, parsing.
+- **Codex CLI registry entry**: `binary: "codex"` resolves to the Codex strategy. `configPath` returns `~/.codex/config.toml` via `os.homedir()`. Serializes the standard `McpConfigFileContent` to TOML via the new writer. No CLI flag injection (Codex auto-discovers `~/.codex/config.toml`). `cleanupConfigFile: false` consistent with Gemini (operators who wire Codex MCP typically want the wiring sticky). `mergeIntoExisting: true` so existing operator-edited sections survive.
+- **`BridgedCliStrategy` interface gains three optional fields** (back-compat additive): `serializeConfig?(content): string` (default `JSON.stringify(content, null, 2)`), `mergeIntoExisting?: boolean` (default `false`), `mergeSectionHeader?: string` (default `"mcp_servers.<serverName>"`). Claude Code and Gemini CLI entries unchanged; the JSON default + overwrite behavior matches v0.7.0 exactly.
+- **Runner-side read-modify-write** in `src/mcp/cli-bridge-wiring.ts`. When a strategy sets `mergeIntoExisting: true` and the config file exists, the runner reads the existing content, calls `upsertTomlSection` to replace or append just the OpenWar section, writes the merged result. When the file doesn't exist, behavior is unchanged (write the serialized output verbatim).
+- **Tests**: `tests/mcp/toml-writer.test.ts` (25 cases covering basic strings, every TOML 1.0 escape individually, Windows backslash paths, paths with spaces, dotted section headers, string arrays, empty arrays, the canonical MCP config shape, and 6 cases on `upsertTomlSection` for append / replace / final-section / prefix-collision / CRLF normalization). `tests/mcp/cli-bridge-wiring-codex.test.ts` (4 end-to-end cases against a tmp HOME: writes TOML to `~/.codex/config.toml`, merge preserves operator `[user]` + `[history]` sections, merge replaces stale `[mcp_servers.openwar]` block, `cli.mcp_forward: false` opt-out short-circuits the whole setup). `tests/mcp/bridged-cli-registry.test.ts` extended with 7 Codex resolution + behavior cases.
+- **`docs/adapters.md`**: cli-bridge section gains a "MCP-server-mode and the bridged-CLI registry" subsection with a table of all three registered CLIs (Claude Code, Gemini CLI, Codex CLI) and their config strategy.
+
+### Changed
+
+- The cli-bridge MCP forwarding now serializes the config file through the strategy's `serializeConfig` hook (default JSON, Codex TOML). Behavior for Claude Code and Gemini CLI is byte-identical to v0.7.0.
+
+### Phase 0 design pick
+
+**Append vs overwrite for `~/.codex/config.toml`: read-modify-write.** Builder picked option (a) from the v0.7.1 brief for safety. Operators with hand-edited Codex configs (model preferences, history settings) keep those sections intact across OpenWar runs. The merge is text-boundary based: find `[mcp_servers.openwar]` at column 0, replace its body up to the next column-0 section header or EOF, append if absent. No TOML parser required.
+
+### Known smoke-gap
+
+The brief allowed deferring the operator smoke test if Codex CLI isn't available locally. This release ships on the strength of 35 new unit tests (TOML writer + Codex registry + end-to-end wiring against a tmp HOME), validated cross-platform via the existing CI matrix. A real bridged-Codex session against an OpenWar brief is the v0.7.2 smoke-verification target once the operator has Codex installed.
+
+### Out of scope (deferred or skipped)
+
+- **aider registry entry.** Aider has no native MCP server support today. Defer to v0.7.2 or whenever aider ships first-class MCP support.
+- **TOML parsing.** OpenWar only writes TOML. No parser is added.
+- **General-purpose TOML support.** The serializer covers only what MCP config requires. Scope creep is the failure mode for v0.7.1; integers, floats, booleans, dates, inline tables, multi-line strings, tables of tables are all deliberately unsupported.
+
+### Notes for forkers and War Room integrators
+
+- Zero new runtime dependencies. The TOML writer is ~150 lines of hand-rolled Node stdlib.
+- No state schema bump. No brief format change. Drop-in compatible with v0.7.0.
+- The `BridgedCliStrategy` interface additions are optional fields; forker-defined custom registry entries that don't set them get the v0.7.0 JSON + overwrite behavior unchanged.
+
 ## 0.7.0
 
 MCP-server-mode for cli-bridge. v0.5.0's cli-bridge adapter let OpenWar coordinate a CLI agent (Claude Code, etc), but the bridged CLI could not call OpenWar's native tools because its tool registry was its own. v0.7 closes the gap: OpenWar exposes its native tools as an MCP server, the bridged CLI consumes them through standard MCP, and the runtime threads OpenWar's authorization gates across the bridge. Operators can now run a brief that asks the bridged Claude Code to call `write_project_memory` (or any of the eight native tools) and have it actually work.
