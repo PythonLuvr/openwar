@@ -19,6 +19,7 @@ export function makeCtx(workdir: string, overrides: Partial<{
   defaultTimeoutMs: number;
   defaultMaxOutputBytes: number;
   shellEnabled: boolean;
+  signal: AbortSignal;
 }> = {}): SandboxContext {
   return SandboxContext._create({
     workdir,
@@ -26,6 +27,7 @@ export function makeCtx(workdir: string, overrides: Partial<{
     defaultMaxOutputBytes: overrides.defaultMaxOutputBytes ?? 1_000_000,
     httpAllowlist: null,
     shellEnabled: overrides.shellEnabled ?? true,
+    ...(overrides.signal ? { signal: overrides.signal } : {}),
   });
 }
 
