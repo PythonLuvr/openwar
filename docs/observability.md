@@ -31,6 +31,9 @@ Event types in v0.8.0:
 | `mcp_call_dispatched` / `mcp_call_completed` | Synthesized at session end from the per-session tool log (the bridged CLI's MCP calls into OpenWar). |
 | `mcp_call_pending` | Designed for v0.8.x. Requires subprocess-side tracing in `openwar mcp-serve`. v0.8.0 ships the type so consumers can code against it; real-time emission lands next minor. |
 | `settings_merge_attempted` / `settings_merge_outcome` | The runtime touched a bridged CLI's settings file (Claude Code permission auto-setup). Outcome covers success / parse_error / read_error / write_error. |
+| `learned_profile_applied` | v0.9.1+. Once at session start, when a brief's `learned_profile:` slug loads its `learned.json`. Carries counts of detector overrides, phase budgets, and dead-tool callouts. |
+| `learned_sensitivity_consulted` | v0.9.1+. Per detector consultation with non-default sensitivity. Records the sensitivity value (`loose` / `strict` / `disabled`) and whether the detector fired or was suppressed. |
+| `learned_budget_consulted` | v0.9.1+. At phase enter when a profile is active. Carries recommended budget, the actually-applied value, and the source (`learned` / `brief` / `default`). |
 | `error` | Catchall for runtime exceptions surfaced at known seams. |
 
 The schema is versioned. v0.8.0 ships `version: 1`. v0.8.x can add fields; consumers should treat unknown event types as informational and ignore unknown optional fields.

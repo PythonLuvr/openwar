@@ -101,6 +101,12 @@ function formatEventLine(ev: TraceEvent): string {
       return `${at}  settings_try ${ev.binary}  path=${ev.settings_path}`;
     case "settings_merge_outcome":
       return `${at}  settings_end ${ev.outcome}  ${ev.details}`;
+    case "learned_profile_applied":
+      return `${at}  learn_apply  slug=${ev.slug}  schema=${ev.schema_version}  detectors=${ev.applied.detectors} budgets=${ev.applied.phase_budgets} dead=${ev.applied.tool_callouts}`;
+    case "learned_sensitivity_consulted":
+      return `${at}  learn_sens   ${ev.detector}=${ev.sensitivity}  fired=${ev.fired}`;
+    case "learned_budget_consulted":
+      return `${at}  learn_budg   ${ev.phase}  recommended=${ev.recommended} active=${ev.active} (${ev.source})`;
     case "error":
       return `${at}  ERROR        phase=${ev.phase}  ${ev.error}`;
     default: {

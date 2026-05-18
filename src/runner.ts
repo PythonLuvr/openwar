@@ -32,6 +32,13 @@ import { writeSession, readSession } from "./state/persist.js";
 import { appendTranscript } from "./state/transcript.js";
 import { Tracer } from "./state/trace.js";
 import { runtimeVersion } from "./version.js";
+import {
+  loadLearnedProfile,
+  sensitivityMapFromProfile,
+  LearnedProfileSchemaError,
+  type LearnedProfile,
+  type DetectorSensitivityMap,
+} from "./state/learned-profile.js";
 import { NATIVE_TOOLS } from "./tools/native/index.js";
 import { SandboxContext } from "./sandbox/types.js";
 import { loadHostAllowlist } from "./sandbox/host-allowlist.js";
@@ -114,6 +121,68 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     enabled: !opts.ephemeral,
     openwarVersion: runtimeVersion(),
   });
+
+  // v0.9.1: optional learned profile. Loaded once at session start. Missing
+  // file is a soft warning, not an error: the brief proceeds with default
+  // sensitivities + budgets. Schema mismatch surfaces clearly so the
+  // operator regenerates rather than silently defaulting.
+  let learnedProfile: LearnedProfile | null = null;
+  let detectorSensitivities: DetectorSensitivityMap | undefined = undefined;
+  if (brief.frontmatter.learned_profile) {
+    const slug = brief.frontmatter.learned_profile;
+    try {
+      learnedProfile = loadLearnedProfile(slug);
+    } catch (err) {
+      if (err instanceof LearnedProfileSchemaError) {
+        io.warn(
+          `learned_profile: ${err.message} (path: ${err.path}). Proceeding with defaults.`,
+        );
+        learnedProfile = null;
+      } else {
+        throw err;
+      }
+    }
+    if (!learnedProfile) {
+      io.warn(
+        `learned_profile: "${slug}" set in frontmatter, but no learned.json found. Proceeding with defaults.`,
+      );
+    } else {
+      detectorSensitivities = sensitivityMapFromProfile(learnedProfile);
+      const appliedDetectors = Object.values(learnedProfile.detector_overrides).filter(
+        (o) => o.sensitivity !== "default",
+      ).length;
+      const appliedBudgets = Object.keys(learnedProfile.phase_budgets).length;
+      const deadTools = Object.values(learnedProfile.tool_usage).filter((t) => t.dead).length;
+      tracer.emit({
+        type: "learned_profile_applied",
+        at: new Date().toISOString(),
+        slug: learnedProfile.slug,
+        schema_version: learnedProfile.schema_version,
+        applied: { detectors: appliedDetectors, phase_budgets: appliedBudgets, tool_callouts: deadTools },
+      });
+      io.banner(
+        `Learned profile loaded: ${slug} (${appliedDetectors} detector overrides, ${appliedBudgets} phase budgets, ${deadTools} dead-tool callouts).`,
+      );
+    }
+  }
+
+  // v0.9.1: resolve the execute-phase tool-call budget. Brief-explicit always
+  // wins (single-agent has no brief-level field today, so this is effectively
+  // learned-or-default). Multi-agent coordinator uses its own budget
+  // primitives; learned phase budgets don't apply there in v0.9.1.
+  const learnedExecuteBudget = learnedProfile?.phase_budgets?.execute?.tool_calls;
+  // Audit-emit the consultation. source=learned only when the profile carried
+  // a budget; otherwise source=default.
+  if (learnedProfile) {
+    tracer.emit({
+      type: "learned_budget_consulted",
+      at: new Date().toISOString(),
+      phase: "execute",
+      recommended: learnedExecuteBudget ?? 0,
+      active: learnedExecuteBudget ?? 30, // DEFAULT_MAX_STEPS in execute.ts
+      source: learnedExecuteBudget !== undefined ? "learned" : "default",
+    });
+  }
 
   // Per-phase entry timestamps so phase_exit events carry duration_ms. Map
   // from phase name to enter epoch-ms. Phases can re-enter (e.g. execute
@@ -510,6 +579,8 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     sandbox,
     sessionApproved: session.meta.session_approved_categories ?? [],
     tracer,
+    ...(detectorSensitivities ? { detectorSensitivities } : {}),
+    ...(learnedExecuteBudget !== undefined ? { maxSteps: learnedExecuteBudget } : {}),
     onMessage: (m) => {
       recordMessage(m);
       persist();
@@ -622,6 +693,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       toolDefinitions, toolExecutors, sandbox,
       sessionApproved: session.meta.session_approved_categories ?? [],
       tracer,
+      ...(detectorSensitivities ? { detectorSensitivities } : {}),
       onMessage: (m) => { recordMessage(m); persist(); },
     });
   }

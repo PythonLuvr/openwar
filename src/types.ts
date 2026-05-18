@@ -23,6 +23,10 @@ export interface BriefFrontmatter {
   // the system prompt at session start, capped at 20 entries per category.
   // Default false to keep existing briefs token-cost-neutral.
   inherit_memory?: boolean;
+  // v0.9.1: project slug whose learned.json profile should be loaded at
+  // session start. Explicit only; the runner does NOT auto-discover a profile
+  // from the project: field even if one exists on disk.
+  learned_profile?: string;
   // v0.7: cli-bridge MCP-server-mode toggles. When the brief uses the
   // cli-bridge adapter, the runtime spawns an `openwar mcp-serve` child
   // alongside the bridged CLI so the CLI can call OpenWar's native tools

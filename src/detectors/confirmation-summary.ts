@@ -1,4 +1,5 @@
 import type { ConfirmationDetection } from "../types.js";
+import type { Sensitivity } from "../state/heuristics.js";
 
 // Detects whether a model turn contains a Confirmation Summary in OpenWar's
 // shape. Looks for:
@@ -49,7 +50,7 @@ const MODE_QUESTION_PATTERNS = [
   /which\s+(?:execution\s+)?mode/i,
 ];
 
-export function detectConfirmationSummary(output: string): ConfirmationDetection {
+export function detectConfirmationSummary(output: string, sensitivity: Sensitivity = "default"): ConfirmationDetection {
   const hasMarker = PHASE_0_MARKERS.some((p) => p.test(output));
   const sections: ConfirmationDetection["sections"] = {};
 
@@ -73,7 +74,10 @@ export function detectConfirmationSummary(output: string): ConfirmationDetection
     sections.constraints !== undefined &&
     sections.tools_required !== undefined;
 
-  const found = hasMarker || requiredHit;
+  // v0.9.1: `loose` requires the explicit marker (no implicit four-sections
+  // match). Reduces FP on briefs whose agents produce free-form replies that
+  // happen to include the four section words.
+  const found = sensitivity === "loose" ? hasMarker : (hasMarker || requiredHit);
 
   const asked_for_mode = MODE_QUESTION_PATTERNS.some((p) => p.test(output)) &&
     /\?/.test(output);

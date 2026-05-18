@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.9.1
+
+Adaptive autonomy plumbing with conservative defaults. The plumbing is the deliverable; the thresholds are the patch-release dial.
+
+v0.9.0 deferred the prescriptive layer of adaptive autonomy because the data foundation did not yet exist. v0.9.1 reframes the question: the *threshold values* needed real distributions to calibrate against, but the *structural work* (profile schema, runner integration, detector sensitivity wiring, new trace events) did not. v0.9.1 ships the plumbing with thresholds set high enough that the system is effectively a no-op for the first nine runs against any project. The first usable recommendation arrives around run 10. v0.9.2+ patch releases tune the constants in `src/state/heuristics.ts` once real distributions surface.
+
+### Added
+
+- **`openwar learn <slug>` subcommand** (`src/cli/learn.ts`). Reuses the v0.9.0 history aggregator, applies heuristic recommendation generators with conservative thresholds, prints a candidate `learned.json` (default) or writes it to disk (`--apply`). Flags:
+  - `openwar learn <slug>` (dry run)
+  - `openwar learn <slug> --apply` (write)
+  - `openwar learn <slug> --reset` (delete existing profile)
+  - `openwar learn <slug> --since <ISO>` (filter trace window)
+  - `openwar learn <slug> --min-samples <N>` (floor 5; default 10)
+  - `openwar learn <slug> --emit-frontmatter` (print paste-into-brief YAML)
+- **`src/state/learned-profile.ts`**: profile schema (`schema_version: 1`), atomic save (tmp+rename), schema-version check that raises a typed `LearnedProfileSchemaError` on `MISSING_VERSION` / `VERSION_MISMATCH` / `PARSE` / `SHAPE` rather than silently defaulting.
+- **`src/state/heuristics.ts`**: conservative-threshold constants with one paragraph each explaining what would justify lowering them. v0.9.1 values: `DETECTOR_LOOSE_FIRE_RATE_BAR=0.85`, `DETECTOR_LOOSE_MIN_SAMPLES=10`, `DETECTOR_DISABLED_FIRE_RATE_BAR=0.95`, `DETECTOR_DISABLED_MIN_SAMPLES=20`, `PHASE_BUDGET_MIN_SAMPLES=10`, `PHASE_BUDGET_FORMULA="p90+5"`, `DEAD_TOOL_MIN_SAMPLES=10`. Pinned by `tests/state/heuristics.test.ts` so accidental tuning during refactors fails CI.
+- **`DETECTOR_SAFETY` registry**: `blocker`, `destructive`, `completion`, `confirmation` are `safety_critical: true`; `banned_phrases` and `phase_marker` are false. `disabled` is blocked for safety-critical detectors. The consultation record still surfaces the attempted override.
+- **Detector sensitivity refactor**: each detector's exported function gains an optional `sensitivity: Sensitivity` parameter (defaults to `"default"`; current behavior). `loose` requires stricter signal per detector (e.g., explicit Phase 2 marker for blocker; banned_phrases count >= 2; explicit Phase 4 for completion; explicit Confirmation Summary marker for confirmation; imminent-action marker for destructive). `strict` is a TODO marker; treated as default until v0.9.2+. The `snapshotWithConsultations()` dispatcher centralizes the `disabled` + safety-critical gate and produces a `DetectorConsultation` audit list.
+- **Brief frontmatter**: optional `learned_profile: <slug>` field. Explicit-only loading; the runner does NOT auto-discover a profile from the project slug even if one exists on disk.
+- **Runner integration**: when `learned_profile:` is set, the runner loads the profile, threads a `DetectorSensitivityMap` through `runExecute`, applies the execute-phase budget to `maxSteps`, and emits `learned_profile_applied` once at session start. Missing profile is a soft warning; schema mismatch is a hard remediation message.
+- **Three new trace event types** (additive to the v0.8 union):
+  - `learned_profile_applied`: once per session at profile load. Counts detector overrides, phase budgets, and dead-tool callouts.
+  - `learned_sensitivity_consulted`: per detector consultation with non-default sensitivity. Records sensitivity value and whether the detector fired or was suppressed.
+  - `learned_budget_consulted`: at execute-phase enter. Carries recommended budget, applied value, and source (`learned` / `brief` / `default`).
+- **`openwar inspect <brief_id> --learned`**: brief-scoped view that combines the on-disk profile for the brief's project slug with consultation history from the brief's trace events. Renders detector overrides + phase budgets + tool usage + consultation summary in column-pinned tables.
+- **66 new tests** (`tests/state/heuristics.test.ts`, `tests/state/learned-profile.test.ts`, `tests/detectors/sensitivity.test.ts`, `tests/cli/learn.test.ts`, `tests/runner/learned-profile-apply.test.ts`, `tests/cli/inspect-learned.test.ts`). Total 580 (was 514 at v0.9.0). Right in the brief's 560-580 target.
+- **Library exports** for integrators: heuristics constants, profile load/save, sensitivity map projection, learn subcommand, inspect-learned formatter.
+
+### Design notes (Phase 0 picks)
+
+- **Reframed scope from "adaptive autonomy" to "plumbing with conservative defaults".** The previous v0.9.0 deferral applied to threshold *values*, not to runtime *plumbing*. Building the plumbing now lets v0.9.2+ become a thresholds-only patch.
+- **No threshold constants were tuned during Phase 1 development.** Every value matches the brief.
+- **Determinism**: profile saves are deterministic via `stringifyDeterministic`; same trace inputs produce byte-identical files (modulo `generated_at`). `source_runs` sorted lexicographically by `buildLearnedProfile`.
+- **Detector refactor is fully backward-compatible**: `sensitivity` parameter defaults to `"default"` so all existing detector callers and the v0.8 / v0.9.0 test suite pass unchanged. The 514 prior tests stay green.
+- **Multi-agent coordinator does not consume learned phase budgets** in v0.9.1 (different budget primitives; revisited in v0.9.2+). Detector sensitivities still apply via the coordinator's executor path.
+
+### Out of scope (deferred to v0.9.2+)
+
+- Threshold tuning against observed real-world distributions.
+- Per-detector `strict` semantics (parameter accepted, treated as default).
+- Multi-agent coordinator budget integration.
+- Auto-recommendation expiry / age-off.
+- A/B harness for sensitivity tuning.
+- OpenTelemetry exporter for the three new event types.
+
+### Notes for forkers and War Room integrators
+
+- v0.9.1 is fully backward compatible with v0.9.0 and v0.8.x. Briefs without `learned_profile:` behave identically. The detector refactor preserves default-sensitivity behavior bit-for-bit.
+- War Room integrators can read learned profiles via `loadLearnedProfile(slug)` from the library entry point and consume the three new trace events through `readTrace(brief_id)`.
+- Operators on a fresh install will see "this profile is effectively a no-op at current sample size" until they accumulate ~10 runs against a project slug. This is intentional; expect v0.9.2 to tune the constants once real distributions surface.
+
 ## 0.9.0
 
 `openwar history`: descriptive analytics over accumulated v0.8 traces. Read-only by design.

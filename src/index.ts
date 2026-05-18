@@ -82,3 +82,41 @@ export {
 } from "./state/history.js";
 export { buildHistoryReport, type BuildReportOptions, type BuildReportResult } from "./state/history-report.js";
 export { runHistory, formatHistoryReport, type HistoryRenderOptions, type HistoryRunResult } from "./cli/history.js";
+
+// v0.9.1: adaptive autonomy plumbing. Heuristic recommendations, learned
+// profile schema, runtime overrides. Conservative defaults; tune in v0.9.2+.
+export {
+  DETECTOR_LOOSE_FIRE_RATE_BAR,
+  DETECTOR_LOOSE_MIN_SAMPLES,
+  DETECTOR_DISABLED_FIRE_RATE_BAR,
+  DETECTOR_DISABLED_MIN_SAMPLES,
+  PHASE_BUDGET_MIN_SAMPLES,
+  PHASE_BUDGET_FORMULA,
+  DEAD_TOOL_MIN_SAMPLES,
+  DETECTOR_SAFETY,
+  isSafetyCritical,
+  recommendDetectorOverrides,
+  recommendPhaseBudgets,
+  recommendToolUsage,
+  generateRecommendations,
+  type Sensitivity,
+  type DetectorRecommendation,
+  type PhaseBudgetRecommendation,
+  type ToolUsageRecommendation,
+  type AllRecommendations,
+} from "./state/heuristics.js";
+export {
+  LEARNED_PROFILE_SCHEMA_VERSION,
+  LearnedProfileSchemaError,
+  learnedProfilePath,
+  loadLearnedProfile,
+  saveLearnedProfile,
+  deleteLearnedProfile,
+  profileExists,
+  buildLearnedProfile,
+  sensitivityMapFromProfile,
+  type LearnedProfile,
+  type DetectorSensitivityMap,
+} from "./state/learned-profile.js";
+export { runLearn, type RunLearnOptions, type RunLearnResult } from "./cli/learn.js";
+export { formatLearnedView, type LearnedViewOptions } from "./cli/inspect-learned.js";

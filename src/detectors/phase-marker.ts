@@ -1,4 +1,5 @@
 import type { Phase, PhaseMarkerDetection } from "../types.js";
+import type { Sensitivity } from "../state/heuristics.js";
 
 // Finds explicit Phase N markers the model declares in its output. The
 // runtime tracks these independently of its own phase state so it can
@@ -14,7 +15,11 @@ const PHASE_BY_INDEX: Record<string, Phase> = {
   "4": "completion",
 };
 
-export function detectPhaseMarkers(output: string): PhaseMarkerDetection {
+// v0.9.1: phase_marker has no FP semantics (pure observation), so all
+// sensitivity values are no-ops. The parameter is accepted for signature
+// uniformity across detectors.
+export function detectPhaseMarkers(output: string, sensitivity: Sensitivity = "default"): PhaseMarkerDetection {
+  void sensitivity;
   const declared: Phase[] = [];
   PHASE_HEADER.lastIndex = 0;
   let m: RegExpExecArray | null;

@@ -17,6 +17,9 @@ import * as inspect from "./cli/inspect.js";
 import { runReplay } from "./cli/replay.js";
 import { runHistory, formatHistoryReport } from "./cli/history.js";
 import { buildHistoryReport } from "./state/history-report.js";
+import { runLearn } from "./cli/learn.js";
+import { formatLearnedView } from "./cli/inspect-learned.js";
+import { loadLearnedProfile, LearnedProfileSchemaError } from "./state/learned-profile.js";
 
 interface ParsedFlags {
   positional: string[];
@@ -94,6 +97,9 @@ Usage:
   openwar replay <brief_id>
   openwar dashboard [--port <n>]
   openwar history <project_slug> [--since <ISO>] [--min-samples N] [--json]
+  openwar learn <project_slug> [--apply] [--reset] [--since <ISO>]
+                               [--min-samples N] [--emit-frontmatter]
+  openwar inspect <brief_id> --learned
   openwar validate <brief.md>
   openwar plan <brief.md> [--adapter <id>] [--model <name>]
   openwar roles
@@ -345,7 +351,7 @@ function commandInspect(parsed: ParsedFlags): number {
   return 0;
 }
 
-type InspectMode = "trace" | "timing" | "cost" | "detectors" | "tools" | "mcp" | "history";
+type InspectMode = "trace" | "timing" | "cost" | "detectors" | "tools" | "mcp" | "history" | "learned";
 
 function resolveInspectMode(flags: Record<string, string | boolean>): InspectMode | null {
   if (flags["trace"] === true) return "trace";
@@ -355,6 +361,7 @@ function resolveInspectMode(flags: Record<string, string | boolean>): InspectMod
   if (flags["tools"] === true) return "tools";
   if (flags["mcp"] === true) return "mcp";
   if (flags["history"] === true) return "history";
+  if (flags["learned"] === true) return "learned";
   return null;
 }
 
@@ -370,6 +377,34 @@ function commandInspectMode(briefId: string, mode: InspectMode, flags: Record<st
     }
     const { report, traceless_brief_ids } = buildHistoryReport({ slug: session.meta.project });
     w(formatHistoryReport(report, { traceless_brief_ids }));
+    return 0;
+  }
+  // v0.9.1: --learned shows the learned profile for the brief's project slug
+  // plus consultation history from the brief's trace events.
+  if (mode === "learned") {
+    const session = readSession(briefId);
+    if (!session) {
+      process.stderr.write(`openwar inspect: no session found for "${briefId}"\n`);
+      return 1;
+    }
+    let profile;
+    try {
+      profile = loadLearnedProfile(session.meta.project);
+    } catch (err) {
+      if (err instanceof LearnedProfileSchemaError) {
+        w(`learned profile is invalid: ${err.message}\n`);
+        return 1;
+      }
+      throw err;
+    }
+    const traceRead = readTrace(briefId);
+    w(formatLearnedView({
+      briefId,
+      slug: session.meta.project,
+      profile,
+      events: traceRead.events,
+    }));
+    void flags;
     return 0;
   }
   const { events, empty, corrupted_lines } = readTrace(briefId);
@@ -692,6 +727,25 @@ async function commandMemory(parsed: ParsedFlags): Promise<number> {
   return 2;
 }
 
+function commandLearn(parsed: ParsedFlags): number {
+  const slug = parsed.positional[1];
+  if (!slug) {
+    process.stderr.write("openwar learn: missing <project_slug>\n");
+    return 2;
+  }
+  const opts: Parameters<typeof runLearn>[2] = {};
+  if (parsed.flags["apply"] === true) opts.apply = true;
+  if (parsed.flags["reset"] === true) opts.reset = true;
+  if (typeof parsed.flags["since"] === "string") opts.since = parsed.flags["since"];
+  if (typeof parsed.flags["min-samples"] === "string") {
+    const n = Number(parsed.flags["min-samples"]);
+    if (Number.isFinite(n) && n >= 5) opts.minSamples = n;
+  }
+  if (parsed.flags["emit-frontmatter"] === true) opts.emitFrontmatter = true;
+  runLearn(slug, process.stdout.write.bind(process.stdout), opts);
+  return 0;
+}
+
 function commandHistory(parsed: ParsedFlags): number {
   const slug = parsed.positional[1];
   if (!slug) {
@@ -875,6 +929,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return await commandDashboard(parsed);
     case "history":
       return commandHistory(parsed);
+    case "learn":
+      return commandLearn(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;

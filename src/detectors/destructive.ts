@@ -1,4 +1,5 @@
 import type { DestructiveDetection } from "../types.js";
+import type { Sensitivity } from "../state/heuristics.js";
 
 // Detects whether a model turn announces intent to perform a destructive or
 // out-of-directive action. The framework's hard rule is: such actions must be
@@ -72,7 +73,14 @@ const WILDCARD_TOKENS = new Set(["*", "all", "any", "everything"]);
 export function detectDestructive(
   output: string,
   authorized_costs: string[] = [],
+  sensitivity: Sensitivity = "default",
 ): DestructiveDetection {
+  // v0.9.1: destructive is safety_critical=true. `disabled` is blocked at the
+  // dispatcher level. `loose` here narrows to sentences that ALSO have an
+  // imminent-action marker ("now", "right now", "immediately", "next", "first
+  // thing"), reducing the rhetorical-intent class of FP. `strict` is a TODO
+  // marker; treat as default until v0.9.2+.
+  const requireImminent = sensitivity === "loose";
   const authSet = new Set(authorized_costs.map((s) => s.toLowerCase()));
   const hasWildcard = [...authSet].some((t) => WILDCARD_TOKENS.has(t));
 
@@ -82,6 +90,7 @@ export function detectDestructive(
     if (isInCodeFenceOfFull(output, sentence)) continue;
     if (!INTENT.test(sentence)) continue;
     if (hasNegation(sentence)) continue;
+    if (requireImminent && !IMMINENT.test(sentence)) continue;
     for (const rule of RULES) {
       if (rule.action.test(sentence)) {
         const authorized =
@@ -100,6 +109,9 @@ export function detectDestructive(
 }
 
 const NEGATION = /\b(?:not|won't|will not|don't|do not|cannot|can't|never|no longer|instead of|avoid|refuse to|won['’]t)\b/i;
+
+// v0.9.1 `loose` mode for destructive: extra imminent-action signal.
+const IMMINENT = /\b(?:now|right now|immediately|next|first thing|going to (?:right )?now)\b/i;
 
 function hasNegation(sentence: string): boolean {
   return NEGATION.test(sentence);

@@ -40,6 +40,12 @@ export type TraceEvent =
   | { type: "mcp_call_pending"; call_id: string; tool: string; elapsed_ms: number; at: string }
   | { type: "settings_merge_attempted"; binary: string; settings_path: string; at: string }
   | { type: "settings_merge_outcome"; outcome: "success" | "parse_error" | "write_error" | "read_error"; details: string; at: string }
+  // v0.9.1: learned-profile lifecycle. Emitted once per session when a brief's
+  // learned_profile loads, then per detector/budget consult so the operator
+  // can audit exactly which adjustments fired.
+  | { type: "learned_profile_applied"; at: string; slug: string; schema_version: number; applied: { detectors: number; phase_budgets: number; tool_callouts: number } }
+  | { type: "learned_sensitivity_consulted"; at: string; detector: string; sensitivity: "default" | "loose" | "strict" | "disabled"; fired: boolean }
+  | { type: "learned_budget_consulted"; at: string; phase: string; recommended: number; active: number; source: "learned" | "brief" | "default" }
   | { type: "error"; error: string; phase: Phase; at: string };
 
 export type TraceEventType = TraceEvent["type"];

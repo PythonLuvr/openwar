@@ -1,4 +1,5 @@
 import type { BlockerDetection } from "../types.js";
+import type { Sensitivity } from "../state/heuristics.js";
 
 // Detects whether a model turn declares it is blocked under Phase 2.
 // Two paths to a positive:
@@ -23,7 +24,7 @@ const HEURISTIC_PATTERNS: RegExp[] = [
   /\bwaiting (?:for|on)\s+(?:operator|your\s+(?:call|input))/i,
 ];
 
-export function detectBlocker(output: string): BlockerDetection {
+export function detectBlocker(output: string, sensitivity: Sensitivity = "default"): BlockerDetection {
   for (const p of EXPLICIT_PATTERNS) {
     const m = p.exec(output);
     if (m) {
@@ -33,6 +34,15 @@ export function detectBlocker(output: string): BlockerDetection {
         matched_pattern: p.source,
       };
     }
+  }
+
+  // v0.9.1 sensitivity: `loose` mode skips the heuristic-phrase path. Required
+  // signal is an explicit Phase 2 marker. Mitigates the project-specific
+  // false-positive class where conversational "I can't proceed" phrases are
+  // rhetorical, not real blockers. `strict` is a TODO marker; treat as
+  // default until v0.9.2+ defines per-detector strict semantics.
+  if (sensitivity === "loose") {
+    return { blocked: false, reason: null };
   }
 
   // Heuristic: require at least one signal phrase AND that the output ends

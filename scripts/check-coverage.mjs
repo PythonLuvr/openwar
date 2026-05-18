@@ -27,6 +27,11 @@ const TRACKED = [
   ["src/state/history.ts", 85],
   ["src/state/history-report.ts", 85],
   ["src/cli/history.ts", 85],
+  // v0.9.1 adaptive autonomy plumbing.
+  ["src/state/heuristics.ts", 85],
+  ["src/state/learned-profile.ts", 85],
+  ["src/cli/learn.ts", 85],
+  ["src/cli/inspect-learned.ts", 85],
 ];
 
 function findTests(dir, out = []) {

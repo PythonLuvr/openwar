@@ -1,4 +1,5 @@
 import type { BannedPhraseDetection } from "../types.js";
+import type { Sensitivity } from "../state/heuristics.js";
 
 // Surfaces voice-rule violations from the framework as soft warnings.
 // Counts occurrences case-insensitively. Skips matches inside fenced code
@@ -18,7 +19,7 @@ const BANNED: RegExp[] = [
   /\bfacilitate\b/gi,
 ];
 
-export function detectBannedPhrases(output: string): BannedPhraseDetection {
+export function detectBannedPhrases(output: string, sensitivity: Sensitivity = "default"): BannedPhraseDetection {
   const stripped = stripCodeFences(output);
   const hits: string[] = [];
   let count = 0;
@@ -28,6 +29,12 @@ export function detectBannedPhrases(output: string): BannedPhraseDetection {
       count += matches.length;
       hits.push(...matches.map((m) => m.toLowerCase()));
     }
+  }
+  // v0.9.1: `loose` raises the count floor to >= 2 so a single rhetorical
+  // "absolutely" doesn't trip the warning. The detector still records the
+  // hits; it just won't surface as fired unless the count exceeds 1.
+  if (sensitivity === "loose" && count < 2) {
+    return { count: 0, phrases: [] };
   }
   return { count, phrases: Array.from(new Set(hits)) };
 }

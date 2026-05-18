@@ -6,8 +6,9 @@ This release ships in two halves.
 
 | Version | Scope | Status |
 |---|---|---|
-| v0.9.0 | `openwar history`: read accumulated traces, produce a descriptive report. Counts and quantiles only. No runtime behavior change. | **Shipping.** |
-| v0.9.1 | Adaptive autonomy: `openwar learn`, `learned_profile:` frontmatter, runner integration, detector sensitivity. | Deferred until v0.8 trace data accumulates in real use. |
+| v0.9.0 | `openwar history`: read accumulated traces, produce a descriptive report. Counts and quantiles only. No runtime behavior change. | **Shipped.** |
+| v0.9.1 | Adaptive autonomy plumbing: `openwar learn`, `learned_profile:` frontmatter, runner integration, detector sensitivity. Conservative thresholds make the system a no-op until run ~10. | **Shipped.** |
+| v0.9.2+ | Threshold tuning against real distributions. Patch releases adjust the constants in `src/state/heuristics.ts`. | Pending real-run data. |
 
 v0.9.0 is descriptive. v0.9.1 will be prescriptive. The split exists because adapting against synthetic / thin samples ships footguns. The data foundation has to exist before recommendations against it can be load-bearing.
 
@@ -148,3 +149,115 @@ Override the trace directory with `OPENWAR_SESSIONS_DIR` (introduced in v0.8).
 - A/B harness for sensitivity tuning.
 
 All deferred. v0.9.0 is intentionally narrower.
+
+---
+
+## v0.9.1 plumbing layer
+
+v0.9.1 ships the runtime plumbing for adaptive autonomy with conservative defaults. The system is a no-op for the first 9 runs against any project; the first usable recommendation arrives around run 10. v0.9.2+ patch releases tune the constants in `src/state/heuristics.ts` against real observation.
+
+### `openwar learn <slug>`
+
+```
+openwar learn <slug>                       # dry run: print candidate profile + diff vs existing
+openwar learn <slug> --apply               # write ~/.openwar/projects/<slug>/learned.json
+openwar learn <slug> --reset               # delete existing profile
+openwar learn <slug> --since <ISO>         # only consider traces newer than the timestamp
+openwar learn <slug> --min-samples <N>     # floor 5; default 10
+openwar learn <slug> --emit-frontmatter    # print the YAML snippet for paste-into-brief
+```
+
+### Threshold constants
+
+All thresholds live in `src/state/heuristics.ts` as named constants with a paragraph each explaining what would justify lowering them. Patch releases change these constants and document the observation that justified the change in the CHANGELOG. `tests/state/heuristics.test.ts` pins the current values so an accidental tuning fails CI.
+
+| Constant | v0.9.1 value | What it gates |
+|---|---|---|
+| `DETECTOR_LOOSE_FIRE_RATE_BAR` | 0.85 | Min fires-per-run to recommend `loose` |
+| `DETECTOR_LOOSE_MIN_SAMPLES` | 10 | Min runs for any loose recommendation |
+| `DETECTOR_DISABLED_FIRE_RATE_BAR` | 0.95 | Min fires-per-run to recommend `disabled` (non-safety only) |
+| `DETECTOR_DISABLED_MIN_SAMPLES` | 20 | Min runs for any disabled recommendation |
+| `PHASE_BUDGET_MIN_SAMPLES` | 10 | Min runs reaching a phase before recommending a budget |
+| `PHASE_BUDGET_FORMULA` | "p90+5" | Recommended budget is `ceil(p90) + 5` |
+| `DEAD_TOOL_MIN_SAMPLES` | 10 | Min runs before declaring a tool dead |
+
+### Brief frontmatter
+
+```yaml
+---
+project: my-project
+brief_id: 2026-05-20-X
+scope_locked: true
+authorized_costs:
+  - generation_credits
+learned_profile: my-project        # explicit only; no auto-discovery from project slug
+---
+```
+
+### Runtime behavior
+
+When `learned_profile:` is set:
+
+1. Runner loads `~/.openwar/projects/<slug>/learned.json` at session start.
+2. Detector sensitivity overrides thread through the detector pass via `DetectorSensitivityMap`.
+3. `safety_critical: true` detectors (blocker, destructive, completion, confirmation) ignore `disabled` and fall back to `default`. The consultation record surfaces the attempted override for audit.
+4. Phase budgets apply to `max_steps` in single-agent runs. Multi-agent coordinator runs ignore learned phase budgets in v0.9.1 (different budget primitives; revisited in v0.9.2+).
+5. Brief-explicit settings always win. There is no current brief field that competes with learned sensitivity, but the precedence order is `brief > learned > defaults`.
+
+Missing profile file is a soft warning, not an error. The run proceeds with defaults. Schema-version mismatch raises a hard error with a regenerate-via-`openwar learn` remediation.
+
+### Trace events
+
+Three new event types in the v0.8 union (additive, no schema bump):
+
+| Event | Fires when |
+|---|---|
+| `learned_profile_applied` | Once at session start, when a profile loads. Carries counts of detector overrides, phase budgets, and dead-tool callouts. |
+| `learned_sensitivity_consulted` | Per detector consultation with non-default sensitivity. Records the sensitivity value and whether the detector fired or was suppressed. |
+| `learned_budget_consulted` | At each phase enter, with the recommended budget, the actually-applied value, and the source (`learned`, `brief`, or `default`). |
+
+See `docs/observability.md` for the full event reference.
+
+### `openwar inspect <brief_id> --learned`
+
+Shows the on-disk profile for the brief's project slug plus consultation history from the brief's trace. Render:
+
+```
+Learned profile view
+  brief_id:       <id>
+  slug:           <slug>
+  generated_at:   <ISO>
+  schema_version: 1
+  source_runs:    N
+
+Detector overrides:
+  detector       sensitivity  flag             fire_rate  sample  reason
+  blocker        loose        safety_critical  0.91       12      ...
+
+Phase budgets:
+  phase    tool_calls  p50  p90  sample
+  execute  18          8    13   12
+
+Tool usage:
+  tool        calls  last_used               flag
+  shell_exec  0      -                       DEAD
+
+Consultation summary:
+  Applied at: <ISO>
+  Counts:     detectors=1 budgets=1 dead=1
+  Detector consultations: 14
+    fired:      3
+    suppressed: 11
+
+Notes:
+  - v0.9.1 conservative thresholds active: ...
+```
+
+### Out of scope (deferred to v0.9.2+)
+
+- Threshold tuning against observed real-world distributions.
+- Per-detector "strict" semantics (the parameter is accepted but treated as default in v0.9.1).
+- Multi-agent coordinator budget integration.
+- Auto-recommendation expiry / age-off.
+- A/B sensitivity-tuning harness.
+- OpenTelemetry export of the three new event types.

@@ -12,9 +12,10 @@ import type {
 } from "../types.js";
 import type { SandboxContext } from "../sandbox/types.js";
 import type { ToolExecutor } from "../tools/types.js";
-import { snapshot } from "../detectors/index.js";
+import { snapshotWithConsultations } from "../detectors/index.js";
 import { checkAuthorization } from "../auth/check.js";
 import { Tracer, nullTracer } from "../state/trace.js";
+import type { DetectorSensitivityMap } from "../state/learned-profile.js";
 
 export interface ExecuteOpts {
   brief: Brief;
@@ -39,6 +40,10 @@ export interface ExecuteOpts {
   // v0.8: structured trace emitter. Optional so test callers and the
   // coordinator's executor adapter can pass nullTracer().
   tracer?: Tracer;
+  // v0.9.1: per-detector sensitivity map from a loaded learned profile.
+  // Threaded into snapshot() so detectors honor the overrides. Optional
+  // because most runs do not set learned_profile in frontmatter.
+  detectorSensitivities?: DetectorSensitivityMap;
 }
 
 export interface ExecuteResult {
@@ -226,9 +231,24 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
     }
 
     // ---- Detector pass on the final assistant text of this step. ----
-    const detectors = snapshot(stepText, {
+    const detectorRun = snapshotWithConsultations(stepText, {
       authorized_costs: brief.frontmatter.authorized_costs,
+      ...(opts.detectorSensitivities ? { sensitivities: opts.detectorSensitivities } : {}),
     });
+    const detectors = detectorRun.snapshot;
+    // v0.9.1: emit one learned_sensitivity_consulted event per non-default
+    // detector consultation. Audit trail shows the operator exactly which
+    // adjustments were honored and which fired.
+    const consultAt = new Date().toISOString();
+    for (const c of detectorRun.consultations) {
+      tracer.emit({
+        type: "learned_sensitivity_consulted",
+        at: consultAt,
+        detector: c.detector,
+        sensitivity: c.sensitivity,
+        fired: c.fired,
+      });
+    }
     // v0.8: emit detector_fired for each detector that returned a meaningful
     // signal. Detectors that returned no signal (blocker.blocked=false etc.)
     // don't produce events, keeping the trace focused on actionable fires.

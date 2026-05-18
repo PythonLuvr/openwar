@@ -554,6 +554,14 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
   // injects a structured summary into the system prompt at session start.
   const inherit_memory = raw.inherit_memory === true;
 
+  // v0.9.1: learned_profile string. When set, the runner loads
+  // ~/.openwar/projects/<slug>/learned.json at session start and applies the
+  // detector sensitivity overrides + phase budget recommendations recorded
+  // there. Explicit-only: there is no auto-discovery from the project slug.
+  const learned_profile = typeof raw.learned_profile === "string" && raw.learned_profile.trim().length > 0
+    ? raw.learned_profile.trim()
+    : undefined;
+
   // v0.4: roles list (string[]). Supports several spellings:
   //   roles:
   //     - planner
@@ -648,6 +656,7 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
     ...(workdir ? { workdir } : {}),
     ...(mcp_servers ? { mcp_servers } : {}),
     ...(inherit_memory ? { inherit_memory } : {}),
+    ...(learned_profile ? { learned_profile } : {}),
     ...(cli ? { cli } : {}),
     ...(roles ? { roles } : {}),
     ...(role_adapters ? { role_adapters: normalizeRoleAdapters(role_adapters) } : {}),
