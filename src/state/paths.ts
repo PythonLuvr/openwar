@@ -28,6 +28,28 @@ export function traceFile(briefId: string): string {
   return join(sessionsDir(), `${sanitize(briefId)}.trace.ndjson`);
 }
 
+// v0.10: chat session persistence. NDJSON append-only, same shape contract as
+// trace files so inspect tooling can read both. Lives under <OPENWAR_HOME>/
+// chats/ to keep the sessions/ directory focused on brief runs.
+export function chatsDir(): string {
+  if (process.env.OPENWAR_CHATS_DIR) return process.env.OPENWAR_CHATS_DIR;
+  return join(openwarHome(), "chats");
+}
+
+export function chatFile(chatId: string): string {
+  return join(chatsDir(), `${sanitize(chatId)}.ndjson`);
+}
+
+// v0.10: directory where saved-from-chat briefs land. Operator can run these
+// via `openwar run ~/.openwar/briefs/<name>.md` for replay.
+export function briefsDir(): string {
+  return join(openwarHome(), "briefs");
+}
+
+export function savedBriefPath(name: string): string {
+  return join(briefsDir(), `${sanitize(name)}.md`);
+}
+
 // v0.6: per-project persistence root. Sibling to sessions/. Holds the three
 // memory category JSONL files (decisions, knowledge, constraints). The slug
 // is the brief's `project` field after path sanitization.

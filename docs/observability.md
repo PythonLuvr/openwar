@@ -34,6 +34,9 @@ Event types in v0.8.0:
 | `learned_profile_applied` | v0.9.1+. Once at session start, when a brief's `learned_profile:` slug loads its `learned.json`. Carries counts of detector overrides, phase budgets, and dead-tool callouts. |
 | `learned_sensitivity_consulted` | v0.9.1+. Per detector consultation with non-default sensitivity. Records the sensitivity value (`loose` / `strict` / `disabled`) and whether the detector fired or was suppressed. |
 | `learned_budget_consulted` | v0.9.1+. At phase enter when a profile is active. Carries recommended budget, the actually-applied value, and the source (`learned` / `brief` / `default`). |
+| `chat_session_compiled` | v0.10.0+. Once per chat-originated run, stamped into the brief's trace at session start so `openwar inspect` can show "this run came from chat session X". Includes `chat_id` and `brief_id`. |
+| `chat_session_resumed` | v0.10.0+. Defined for forward-compat. Primarily lives in the chat-store NDJSON (`~/.openwar/chats/<chat_id>.ndjson`); included in the trace union so library consumers can ingest both streams against one type. |
+| `chat_brief_saved` | v0.10.0+. Defined for forward-compat. Primarily lives in the chat-store NDJSON; emitted when a chat session writes a saved brief to `~/.openwar/briefs/<name>.md`. |
 | `error` | Catchall for runtime exceptions surfaced at known seams. |
 
 The schema is versioned. v0.8.0 ships `version: 1`. v0.8.x can add fields; consumers should treat unknown event types as informational and ignore unknown optional fields.

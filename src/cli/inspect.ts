@@ -107,6 +107,12 @@ function formatEventLine(ev: TraceEvent): string {
       return `${at}  learn_sens   ${ev.detector}=${ev.sensitivity}  fired=${ev.fired}`;
     case "learned_budget_consulted":
       return `${at}  learn_budg   ${ev.phase}  recommended=${ev.recommended} active=${ev.active} (${ev.source})`;
+    case "chat_session_compiled":
+      return `${at}  chat_compile chat=${ev.chat_id}  brief=${ev.brief_id}`;
+    case "chat_session_resumed":
+      return `${at}  chat_resume  chat=${ev.chat_id}`;
+    case "chat_brief_saved":
+      return `${at}  chat_saved   chat=${ev.chat_id}  path=${ev.path}`;
     case "error":
       return `${at}  ERROR        phase=${ev.phase}  ${ev.error}`;
     default: {

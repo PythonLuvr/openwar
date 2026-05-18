@@ -32,6 +32,10 @@ const TRACKED = [
   ["src/state/learned-profile.ts", 85],
   ["src/cli/learn.ts", 85],
   ["src/cli/inspect-learned.ts", 85],
+  // v0.10.0 chat layer.
+  ["src/chat/", 85],
+  ["src/state/chat-store.ts", 85],
+  ["src/cli/chat.ts", 85],
 ];
 
 function findTests(dir, out = []) {

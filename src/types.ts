@@ -327,6 +327,11 @@ export interface RunOptions {
     max_tool_calls_per_subtask: number;
     max_retries_per_subtask: number;
   }>;
+  // v0.10.0: chat-session id when this run was kicked off from `openwar
+  // chat`. Stamped into the trace via a chat_session_compiled event so
+  // `openwar inspect` can show the originating chat. Undefined for runs
+  // launched via `openwar run` directly.
+  chatId?: string;
 }
 
 export interface RunResult {

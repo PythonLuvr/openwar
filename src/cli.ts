@@ -16,6 +16,7 @@ import { readTrace } from "./state/trace.js";
 import * as inspect from "./cli/inspect.js";
 import { runReplay } from "./cli/replay.js";
 import { runHistory, formatHistoryReport } from "./cli/history.js";
+import { runChatCommand, ChatStartupError } from "./cli/chat.js";
 import { buildHistoryReport } from "./state/history-report.js";
 import { runLearn } from "./cli/learn.js";
 import { formatLearnedView } from "./cli/inspect-learned.js";
@@ -75,7 +76,14 @@ function printHelp(): void {
   const v = getPackageVersion();
   const out = `openwar v${v}
 
+Quickstart:
+  openwar chat              Start a conversation (recommended for first-time use)
+  openwar run brief.md      Run a hand-authored brief
+
 Usage:
+  openwar chat [--resume <chat_id>|last] [--adapter <id>] [--model <name>]
+              [--exec-adapter <id>] [--exec-binary <path>] [--project <slug>]
+              [--no-save]
   openwar run <brief.md> [--adapter <id>] [--model <name>] [--mode gated|auto]
                          [--workdir <path>] [--no-shell]
                          [--mcp-server name=command] [--resume] [--ephemeral]
@@ -727,6 +735,26 @@ async function commandMemory(parsed: ParsedFlags): Promise<number> {
   return 2;
 }
 
+async function commandChat(parsed: ParsedFlags): Promise<number> {
+  const opts: Parameters<typeof runChatCommand>[0] = {};
+  if (typeof parsed.flags["resume"] === "string") opts.resume = parsed.flags["resume"];
+  if (typeof parsed.flags["adapter"] === "string") opts.adapter = parsed.flags["adapter"];
+  if (typeof parsed.flags["model"] === "string") opts.model = parsed.flags["model"];
+  if (typeof parsed.flags["exec-adapter"] === "string") opts.execAdapter = parsed.flags["exec-adapter"];
+  if (typeof parsed.flags["exec-binary"] === "string") opts.execBinary = parsed.flags["exec-binary"];
+  if (typeof parsed.flags["project"] === "string") opts.project = parsed.flags["project"];
+  if (parsed.flags["no-save"] === true) opts.noSave = true;
+  try {
+    return await runChatCommand(opts);
+  } catch (err) {
+    if (err instanceof ChatStartupError) {
+      process.stderr.write(`openwar chat: ${err.message}\n`);
+      return err.code === "NO_ADAPTER" || err.code === "INCOMPATIBLE_ADAPTER" ? 2 : 1;
+    }
+    throw err;
+  }
+}
+
 function commandLearn(parsed: ParsedFlags): number {
   const slug = parsed.positional[1];
   if (!slug) {
@@ -931,6 +959,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return commandHistory(parsed);
     case "learn":
       return commandLearn(parsed);
+    case "chat":
+      return await commandChat(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;

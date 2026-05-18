@@ -46,6 +46,15 @@ export type TraceEvent =
   | { type: "learned_profile_applied"; at: string; slug: string; schema_version: number; applied: { detectors: number; phase_budgets: number; tool_callouts: number } }
   | { type: "learned_sensitivity_consulted"; at: string; detector: string; sensitivity: "default" | "loose" | "strict" | "disabled"; fired: boolean }
   | { type: "learned_budget_consulted"; at: string; phase: string; recommended: number; active: number; source: "learned" | "brief" | "default" }
+  // v0.10.0: chat-originated runs. Emitted into the brief's trace when the
+  // run was kicked off from `openwar chat`, so `openwar inspect` can show
+  // "this run came from chat session X". chat_session_resumed +
+  // chat_brief_saved primarily live in the chat-store NDJSON (separate from
+  // the per-brief trace); they are defined here so library consumers can
+  // ingest both streams against one type union.
+  | { type: "chat_session_compiled"; at: string; chat_id: string; brief_id: string }
+  | { type: "chat_session_resumed"; at: string; chat_id: string }
+  | { type: "chat_brief_saved"; at: string; chat_id: string; path: string }
   | { type: "error"; error: string; phase: Phase; at: string };
 
 export type TraceEventType = TraceEvent["type"];

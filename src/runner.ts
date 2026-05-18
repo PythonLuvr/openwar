@@ -122,6 +122,17 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     openwarVersion: runtimeVersion(),
   });
 
+  // v0.10.0: chat-originated runs stamp a chat_session_compiled event so
+  // `openwar inspect` can show "this run came from chat session X."
+  if (opts.chatId) {
+    tracer.emit({
+      type: "chat_session_compiled",
+      at: new Date().toISOString(),
+      chat_id: opts.chatId,
+      brief_id: session.meta.brief_id,
+    });
+  }
+
   // v0.9.1: optional learned profile. Loaded once at session start. Missing
   // file is a soft warning, not an error: the brief proceeds with default
   // sensitivities + budgets. Schema mismatch surfaces clearly so the

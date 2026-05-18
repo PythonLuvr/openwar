@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.10.0
+
+`openwar chat`: the front door. The runtime is the same; the entry point is new. A non-developer describes what they want in plain English, OpenWar asks clarifying questions if needed, proposes a plan, gets approval, executes through the existing phase machine, and surfaces destructive prompts as plain English questions instead of y/n flags. The audit trail underneath (trace.ndjson, phase events, detector log, learned profile) all still exists. Power users keep writing briefs by hand. Everyone else just talks.
+
+Originally scoped as one ship. Split during Phase 0 review into v0.10.0 (functional chat layer) and v0.10.1 (positioning + UX refinements based on real adoption signal) on the same pattern as the v0.7 reorder and v0.9 split. Three for three on this pattern.
+
+### Added
+
+- **`openwar chat` subcommand**. Interactive readline session. Default conversation-agent adapter precedence: `ANTHROPIC_API_KEY` > `OPENAI_API_KEY` > `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) > `XAI_API_KEY` > `OPENAI_COMPAT_API_KEY`. Hard error with install hint if none are set; cli-bridge stays fully supported for hand-authored briefs as the BYOK-free escape hatch. Flags: `--resume <id|last>`, `--adapter`, `--model`, `--exec-adapter`, `--exec-binary`, `--project`, `--no-save`.
+- **Per-role adapter split for chat sessions**. Conversation-agent adapter (must support tool calls) is separate from execution adapter. Default: same. Override execution to cli-bridge via `--exec-adapter cli-bridge --exec-binary claude` for free local execution on an existing Claude Code subscription while keeping intent extraction deterministic via a BYOK key.
+- **Structured tool-call intent contract** (`src/chat/intent.ts`). Conversation agent declares intent via four tool calls (`ask_clarification`, `propose_plan`, `start_execution`, `summarize_result`), not free text. Adversarial fixtures in `tests/chat/intent.test.ts` pin every failure mode (no_tool_call, multiple_tool_calls, unknown_tool, invalid_args, fabricated_approval). Drift counter falls back to a deterministic user question after 3 failed turns; hard-fails the session after 5 with a save-and-resume pointer.
+- **Conservative-authorization compiler** (`src/chat/compile.ts`). LOAD-BEARING INVARIANT: destructive categories (`filesystem_delete`, `shell_exec`, `http_fetch`, `paid_api_call`, `git_write`, `git_push`, `deploy`, `external_message`) are NEVER auto-granted. They route through Phase 3 at execution time so the user sees them as natural-language confirms instead of silent grants in a skimmed plan. `SAFE_AUTOGRANT` is `{filesystem_read, filesystem_write}` only; expanding it is a P0 regression. Adversarial fixtures pin each destructive category individually.
+- **Plain-English plan presenter** (`src/chat/plan.ts`). Three sections: Plan (bulleted), Authorized (plain-language descriptions of each cost category), Not authorized (explicit list with consequence sentences and a reassuring "I'll ask you in plain English first" note).
+- **Phase event renderer** (`src/chat/render.ts`) + destructive phrase templates (`src/chat/destructive-phrases.ts`). Translates runtime trace events to chat output. `git push` becomes "publish this change to your repository; that will push your local commit to the remote." Tool-call debouncing avoids spamming on rapid sequential calls. Per-subtype templates cover every destructive subtype the runtime emits; missing-template would fail CI.
+- **Chat session manager** (`src/chat/session.ts`). Orchestrates the full clarify -> propose -> approve -> execute -> summarize -> save loop. Threads detector sensitivity (from learned profile) through to the runtime. Routes destructive prompts to the user and back to the runtime gate. Save-brief writes a v0.x-compatible YAML-frontmatter markdown file with the source conversation as a blockquote.
+- **Chat store** (`src/state/chat-store.ts`). NDJSON append-only at `~/.openwar/chats/<chat_id>.ndjson`. First line is a `chat_session_started` header with `schema_version: 1`. Mismatch on resume raises a typed error with remediation. Same shape contract as v0.8 trace files.
+- **Slash commands** (`src/chat/commands.ts`). `/help`, `/save`, `/inspect`, `/history`, `/resume`, `/abort`, `/quit`. Path-vs-command heuristic: `/index.html` is treated as text, not as an unknown command, so users can naturally reference paths mid-conversation.
+- **Project memory + learned profile integration** (`src/chat/context.ts`). At session start, loads recent project memory entries and the learned profile (if any) and surfaces them to the conversation agent. When a learned profile exists, the chat session stamps `learned_profile: <slug>` into the compiled brief's frontmatter so the runtime applies the profile at execution time (per v0.9.1 contract).
+- **Three new trace event types**: `chat_session_compiled` (emitted into the brief's trace at session start when a run is chat-originated, via the new `RunOptions.chatId` field), `chat_session_resumed` and `chat_brief_saved` (defined for forward-compat; primary persistence is the chat-store NDJSON).
+- **133 new tests** across `tests/chat/*.test.ts`, `tests/cli/chat-cli.test.ts`, and the headline `tests/integration/chat-full-cycle.test.ts` (full chat -> propose -> approve -> execute -> save -> replay loop). Total 713 (was 580 at v0.9.1). Right in the brief's 700-720 target range.
+- **`docs/chat.md`** (new). Operator guide. Walkthrough, flag surface, conservative-auth invariant, slash commands, saved-brief replay semantics, project memory + learned profile integration, intent contract.
+- **README "New in v0.10" section.** The chat path is added to the quickstart without touching the existing hero pitch.
+- **Library exports** for integrators: intent contract types, compiler, plan presenter, renderer, session manager, chat-store reader/writer.
+
+### Design notes (Phase 0 deviations approved)
+
+- **Split into v0.10.0 + v0.10.1**. Functional chat layer ships now; README hero rewrite and mid-tool-call cancellation wait for adoption signal. Same pattern as v0.7 / v0.9 splits.
+- **Tool-call intent extraction, not free-text classification**. Free-text would drift at scale. The four-tool contract is testable from day one with adversarial fixtures.
+- **cli-bridge incompatible with conversation agent (architectural)**. cli-bridge does not surface tool-call events to OpenWar; the bridged binary's stdout is free text. We picked **option (c) hybrid**: the conversation agent uses a tool-call-capable BYOK adapter; the execution adapter can still be cli-bridge for free local Claude Code use. Stronger than the brief's binary (a)/(b) options.
+- **Conservative authorization is load-bearing**. Adversarial fixtures pin every destructive category individually. The plan presenter explicitly lists "Not authorized" with consequence sentences so the user sees what is excluded as visibly as what is included.
+- **Off-topic mid-conversation: single-task focus** (option D, not in brief). Agent says "I'm focused on X right now. After it's done I can help with Y. Want me to remember it for after?" rather than compiling a second brief in the same session.
+- **Polite abort only in v0.10.0**. Mid-tool-call cancellation deferred to v0.10.1.
+- **Save-brief replay semantics explicitly documented**. "Replays deliverables on the named project; if repo state has drifted, the agent may need different actions." Header in the file + paragraph in docs/chat.md.
+- **Determinism scoping honest**. Compiler is pure; conversation feeding it is stochastic. Docs say so.
+- **Path-vs-command heuristic** (caught during integration testing). Real slash commands are single-word `[a-z]+`; paths like `/index.html` or `/usr/local/bin` are treated as user text and routed to the conversation agent.
+
+### Out of scope (deferred to v0.10.1)
+
+- README hero rewrite (positioning change pending adoption signal).
+- Mid-tool-call cancellation (`/abort` is polite in v0.10.0).
+- Multi-channel chat surfaces (Discord, Slack, Telegram).
+- Streaming responses during agent turns.
+
+### Notes for forkers and War Room integrators
+
+- v0.10.0 is fully backward compatible with v0.9.x and all earlier versions. Existing briefs run identically. Existing scripts wrapping `openwar run` are unaffected. The new `openwar chat` subcommand is additive.
+- The chat store at `~/.openwar/chats/<chat_id>.ndjson` is a separate persistence stream from `~/.openwar/sessions/<brief_id>.trace.ndjson`. Library consumers can ingest both via `readChat()` and `readTrace()` exports.
+- A chat-originated brief's trace stamps `chat_session_compiled` with the originating chat id; `openwar inspect <brief_id> --trace` shows the correlation.
+
 ## 0.9.1
 
 Adaptive autonomy plumbing with conservative defaults. The plumbing is the deliverable; the thresholds are the patch-release dial.

@@ -120,3 +120,46 @@ export {
 } from "./state/learned-profile.js";
 export { runLearn, type RunLearnOptions, type RunLearnResult } from "./cli/learn.js";
 export { formatLearnedView, type LearnedViewOptions } from "./cli/inspect-learned.js";
+
+// v0.10.0: chat surface. Integrators (War Room, etc.) can embed the
+// conversation -> compile -> execute loop in their own UIs.
+export {
+  INTENT_TOOL_NAMES,
+  INTENT_TOOL_DEFINITIONS,
+  parseIntent,
+  looksLikeApproval,
+  DRIFT_THRESHOLD,
+  HARD_FAIL_THRESHOLD,
+  type Intent,
+  type IntentName,
+  type BriefDraft,
+  type IntendedAction,
+} from "./chat/intent.js";
+export {
+  compileBriefFromChat,
+  renderRawBriefMarkdown,
+  DESTRUCTIVE_NEVER_AUTOGRANT,
+  SAFE_AUTOGRANT,
+  type ConversationBuffer,
+  type CompileOptions,
+  type CompileResult,
+} from "./chat/compile.js";
+export { presentPlan, AUTH_DESCRIPTIONS, type PresentPlanOptions } from "./chat/plan.js";
+export { PhaseEventRenderer, describeTool } from "./chat/render.js";
+export { DESTRUCTIVE_PHRASES, phraseFor, destructivePromptText } from "./chat/destructive-phrases.js";
+export { parseCommand, slugify, HELP_TEXT, COMMAND_NAMES } from "./chat/commands.js";
+export { callConversationAgent, CONVERSATION_AGENT_SYSTEM_PROMPT } from "./chat/agent.js";
+export { ChatSession, runnerIoFromChatIo, type ChatIO, type ChatSessionOptions } from "./chat/session.js";
+export {
+  ChatStore,
+  CHAT_SCHEMA_VERSION,
+  ChatStoreSchemaError,
+  newChatId,
+  readChat,
+  listChats,
+  mostRecentChatId,
+  nullChatStore,
+  type ChatEvent,
+} from "./state/chat-store.js";
+export { saveBriefFile, suggestUniqueName, SaveBriefError } from "./chat/save-brief.js";
+export { loadContextForChat, type ContextForChat } from "./chat/context.js";
