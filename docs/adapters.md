@@ -96,7 +96,24 @@ The runtime knows how to wire MCP forwarding for these bridged CLIs out of the b
 
 Unknown binaries (aider, custom tools without native MCP support) hit a fallback: the OpenWar MCP config is still written to a temp JSON file, but no CLI args are injected. The runtime emits a startup warning so the operator can wire MCP manually for that CLI, or set `cli.mcp_forward: false` in the brief frontmatter to disable forwarding entirely and run the bridged CLI in its own tool sandbox.
 
-The Codex entry preserves operator hand-edits to other sections of `~/.codex/config.toml` (it reads the file, replaces or appends the `[mcp_servers.openwar]` block, leaves everything else untouched). Same model is expected to extend to other TOML-config CLIs in v0.7.2+.
+The Codex entry preserves operator hand-edits to other sections of `~/.codex/config.toml` (it reads the file, replaces or appends the `[mcp_servers.openwar]` block, leaves everything else untouched). Same model is expected to extend to other TOML-config CLIs in v0.7.3+.
+
+### Claude Code permission auto-setup (v0.7.2+)
+
+Claude Code treats every external MCP tool as separate-trust. Even with MCP forwarding wired correctly, the bridged Claude Code halts at its own permission gate on the first openwar tool call (`Claude requested permissions to use mcp__openwar__openwar_<tool>, but you haven't granted it yet.`). Neither `--permission-mode bypassPermissions` nor `--allowedTools` covers external MCP tools.
+
+v0.7.2 closes that gap by pre-authorizing the openwar MCP tools in `~/.claude/settings.json` before spawn. The runner:
+
+1. Reads the existing settings file (if any) and validates it parses as JSON.
+2. Adds any missing `mcp__openwar__openwar_<tool>` patterns to `permissions.allow` (eight entries, one per native tool).
+3. Writes atomically via tmp + rename.
+4. Emits a banner: `Pre-authorized openwar MCP tools in Claude Code settings at <path> (added N new grants / all already authorized). Existing operator settings preserved.`
+
+Operator-edited keys (other MCP servers' grants, Bash / Read / WebFetch entries, top-level keys, `permissions.deny`) are preserved verbatim. The merge is idempotent.
+
+If the existing settings file is malformed JSON, the runner halts cleanly into Phase 2 with `halt_reason: cli_bridge_permission_setup_failed_parse` and a remediation message rather than clobbering. Same for write-permission failures.
+
+Operators who manage their Claude Code settings via dotfiles, Ansible, or company policy can opt out with `cli.skip_permission_setup: true` in the brief frontmatter; the merge is skipped and the operator manages permissions themselves. Gemini CLI and Codex CLI permission auto-setup are not in v0.7.2; if real testing surfaces the same friction with those CLIs, handling lands in v0.7.3+.
 
 ### When to use cli-bridge vs an API adapter
 

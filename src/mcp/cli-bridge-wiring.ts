@@ -20,6 +20,27 @@ import type { Brief, RunnerIO, ToolCallRecord } from "../types.js";
 import type { CliBridgeAdapter } from "../adapters/cli-bridge.js";
 import { resolveBridgedCliStrategy, buildMcpConfigFile } from "./bridged-cli-registry.js";
 import { upsertTomlSection } from "./toml-writer.js";
+import {
+  claudeSettingsPath,
+  mergeClaudeSettings,
+  ClaudeSettingsMergeError,
+  OPENWAR_MCP_TOOL_PATTERNS,
+} from "./bridged-cli-settings.js";
+
+// v0.7.2: thrown by setupCliBridgeMcpForwarding when the bridged-CLI
+// permission auto-setup cannot proceed safely. Caller halts Phase 2 with
+// the remediation message; the bridged CLI is NOT spawned with broken
+// permissions (operator would hit the gate mid-run and be confused).
+export class CliBridgePermissionSetupError extends Error {
+  readonly code: "PARSE" | "READ" | "WRITE";
+  readonly path: string;
+  constructor(code: "PARSE" | "READ" | "WRITE", path: string, message: string) {
+    super(message);
+    this.code = code;
+    this.path = path;
+    this.name = "CliBridgePermissionSetupError";
+  }
+}
 
 export interface CliBridgeMcpSetup {
   enabled: boolean;
@@ -145,6 +166,31 @@ export async function setupCliBridgeMcpForwarding(
   });
   if (cliArgs.length > 0) {
     opts.adapter.addExtraArgs(cliArgs);
+  }
+
+  // v0.7.2: Claude Code permission auto-setup. Pre-authorize the openwar
+  // MCP tools in ~/.claude/settings.json before spawn so the bridged
+  // Claude Code does not halt at its own permission gate on the first
+  // openwar tool call. Default-on; opt out via cli.skip_permission_setup.
+  const isClaudeCode = strategy.display_name === "Claude Code";
+  const skipPermSetup = opts.brief.frontmatter.cli?.skip_permission_setup === true;
+  if (isClaudeCode && !skipPermSetup) {
+    const settingsPath = claudeSettingsPath();
+    try {
+      const result = await mergeClaudeSettings(settingsPath, OPENWAR_MCP_TOOL_PATTERNS);
+      const note = result.added.length === 0
+        ? "all already authorized"
+        : `added ${result.added.length} new grant${result.added.length === 1 ? "" : "s"}`;
+      opts.io.banner(
+        `Pre-authorized openwar MCP tools in Claude Code settings at ${result.path} (${note}). ` +
+          `Existing operator settings preserved.`,
+      );
+    } catch (err) {
+      if (err instanceof ClaudeSettingsMergeError) {
+        throw new CliBridgePermissionSetupError(err.code, err.path, err.message);
+      }
+      throw err;
+    }
   }
 
   if (!strategy.mcp_supported) {

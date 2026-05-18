@@ -31,6 +31,13 @@ export interface BriefFrontmatter {
   // it false to fall back to v0.6 stdout-only cli-bridge.
   cli?: {
     mcp_forward?: boolean;
+    // v0.7.2: when true, the runner does NOT touch the bridged CLI's user
+    // settings file to pre-authorize OpenWar's MCP tools. Operators who
+    // manage their Claude Code settings via dotfiles / Ansible / company
+    // policy set this true; everyone else gets the default (auto-setup
+    // on) so the bridged CLI doesn't halt at its own permission gate
+    // on the first openwar tool call.
+    skip_permission_setup?: boolean;
   };
   // v0.4 additions. Optional; omitted = single-agent mode (v0.3 behavior).
   roles?: string[];

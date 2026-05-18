@@ -180,10 +180,11 @@ export function validateBrief(brief: Brief, options: ValidateBriefOptions = {}):
       message:
         "cli-bridge is in play and the brief authorizes side-effecting categories. " +
         "OpenWar's authorized_costs apply to OpenWar tool calls, but the bridged CLI runs " +
-        "as its own subprocess with its own permission system. For Claude Code: pre-authorize " +
-        "the brief's filesystem paths in your Claude Code permissions, or the bridged agent " +
-        "may declare Phase 2 mid-run when its own permissions reject writes the OpenWar brief " +
-        "authorized.",
+        "as its own subprocess with its own permission system. v0.7.2+ auto-authorizes the " +
+        "openwar MCP tools in Claude Code's settings before spawn. Other permission categories " +
+        "(filesystem paths the bridged CLI's own tools touch, shell commands it runs internally) " +
+        "remain the operator's responsibility; set cli.skip_permission_setup: true to opt out of " +
+        "auto-authorization.",
       severity: "warning",
     });
   }
@@ -539,11 +540,12 @@ function finalizeFrontmatter(raw: Record<string, unknown>): BriefFrontmatter {
   // v0.7: cli.mcp_forward boolean. Defaults true. Lives under a nested `cli`
   // key in frontmatter so future cli-bridge knobs can live alongside without
   // polluting the top level (cli.timeout_override etc).
-  let cli: { mcp_forward?: boolean } | undefined;
+  let cli: { mcp_forward?: boolean; skip_permission_setup?: boolean } | undefined;
   if (raw.cli && typeof raw.cli === "object" && !Array.isArray(raw.cli)) {
     const c = raw.cli as Record<string, unknown>;
     cli = {};
     if (typeof c.mcp_forward === "boolean") cli.mcp_forward = c.mcp_forward;
+    if (typeof c.skip_permission_setup === "boolean") cli.skip_permission_setup = c.skip_permission_setup;
     if (Object.keys(cli).length === 0) cli = undefined;
   }
 

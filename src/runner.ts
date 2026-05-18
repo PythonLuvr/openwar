@@ -37,7 +37,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { MCPClient, StdioTransport, loadGlobalMcpConfig, splitCommand } from "./mcp/index.js";
 import { renderMemoryForRole } from "./roles/memory-visibility.js";
-import { setupCliBridgeMcpForwarding, replayMcpToolLog, type CliBridgeMcpSetup } from "./mcp/cli-bridge-wiring.js";
+import { setupCliBridgeMcpForwarding, replayMcpToolLog, CliBridgePermissionSetupError, type CliBridgeMcpSetup } from "./mcp/cli-bridge-wiring.js";
 import { CliBridgeAdapter } from "./adapters/cli-bridge.js";
 
 export async function run(opts: RunOptions): Promise<RunResult> {
@@ -164,9 +164,9 @@ export async function run(opts: RunOptions): Promise<RunResult> {
         "cli-bridge in use with side-effecting authorized_costs. The bridged CLI " +
           "runs as its own subprocess with its own permission system (Claude Code's " +
           "permissions, etc); OpenWar's authorized_costs apply to OpenWar tool calls only. " +
-          "If the bridged agent declares Phase 2 on a write the brief authorized, the cause " +
-          "is the CLI's own permission layer rejecting it. Pre-authorize the brief's paths " +
-          "in the bridged CLI's permission settings to avoid this.",
+          "v0.7.2+ auto-authorizes the openwar MCP tools in Claude Code's settings before " +
+          "spawn. Other permission categories (filesystem paths the bridged CLI's own tools " +
+          "touch, shell commands it runs internally) remain the operator's responsibility.",
       );
     }
   }
@@ -196,13 +196,40 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   let mcpSetup: CliBridgeMcpSetup | null = null;
   if (usesCliBridgeAtRoot && adapter instanceof CliBridgeAdapter) {
     const workdirForMcp = opts.workdir ?? brief.frontmatter.workdir ?? process.cwd();
-    mcpSetup = await setupCliBridgeMcpForwarding({
-      brief,
-      adapter,
-      io,
-      workdir: workdirForMcp,
-      briefId: session.meta.brief_id,
-    });
+    try {
+      mcpSetup = await setupCliBridgeMcpForwarding({
+        brief,
+        adapter,
+        io,
+        workdir: workdirForMcp,
+        briefId: session.meta.brief_id,
+      });
+    } catch (err) {
+      // v0.7.2: pre-spawn permission auto-setup failed. Halt cleanly into
+      // Phase 2 with the remediation message rather than spawning the
+      // bridged CLI with broken permissions (operator would hit the gate
+      // mid-run and not know why).
+      if (err instanceof CliBridgePermissionSetupError) {
+        transition("blocker", `cli_bridge_permission_setup_failed (${err.code})`);
+        persist();
+        io.write(
+          `\nopenwar: Claude Code permission auto-setup failed.\n` +
+            `  ${err.message}\n` +
+            `Remediation: fix the settings file at ${err.path}, or set ` +
+            `cli.skip_permission_setup: true in the brief to opt out of ` +
+            `auto-setup and manage permissions manually.\n`,
+        );
+        return {
+          session_id: session.meta.brief_id,
+          final_phase: session.meta.phase,
+          completed: false,
+          halted: true,
+          halt_reason: `cli_bridge_permission_setup_failed_${err.code.toLowerCase()}`,
+          messages: session.messages,
+        };
+      }
+      throw err;
+    }
   }
 
   // ------------------- Phase 0 -------------------

@@ -44,7 +44,11 @@ ${BODY}`);
   );
   assert.ok(warning, "expected a warning about bridged-CLI permissions");
   assert.match(warning!.message, /bridged CLI/);
-  assert.match(warning!.message, /Phase 2/);
+  // v0.7.2: warning text updated to describe auto-setup behavior and the
+  // operator's remaining responsibility (path / shell categories the
+  // bridged CLI handles internally).
+  assert.match(warning!.message, /v0\.7\.2\+ auto-authorizes/);
+  assert.match(warning!.message, /skip_permission_setup/);
 });
 
 test("validateBrief: warns when cli-bridge role + shell_exec only", () => {

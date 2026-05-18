@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.7.2
+
+Bridged-CLI permission auto-setup. v0.7.1's MCP forwarding wired the protocol correctly, but real-world live testing surfaced the next gap: the bridged Claude Code halts at its own permission gate on the first MCP tool call (`Claude requested permissions to use mcp__openwar__openwar_<tool>, but you haven't granted it yet.`). Claude Code treats external MCP tools as separate-trust by design; neither `--permission-mode bypassPermissions` nor `--allowedTools` bypasses them. v0.7.2 ships the automation that pre-authorizes the openwar MCP tools at the bridged CLI's settings file before spawn.
+
+A Windows / macOS / Linux operator who runs `cli-bridge` against Claude Code with the default `cli.mcp_forward: true` now gets a clean Phase 0 → Phase 4 run without ever touching Claude Code's settings file themselves.
+
+### Added
+
+- **`src/mcp/bridged-cli-settings.ts`**: new module owning Claude Code permission auto-setup. Exports `claudeSettingsPath()` (verified against a real Claude Code install: `~/.claude/settings.json` on all three platforms; the brief's per-platform path guesses turned out to be wrong, the real layout is uniform), `mergeClaudeSettings(path, patterns)` (read-modify-write into the `permissions.allow` array; preserves all unrelated keys including other MCP servers' grants; idempotent; atomic via tmp+rename), `OPENWAR_MCP_TOOL_PATTERNS` (the eight `mcp__openwar__openwar_<tool>` patterns matching v0.7's native tools after Claude Code's namespace mangling), and `ClaudeSettingsMergeError` with stable `PARSE` / `READ` / `WRITE` codes.
+- **Runner wiring**: before spawning Claude Code via cli-bridge, the runner calls `mergeClaudeSettings` with the eight openwar patterns and emits `Pre-authorized openwar MCP tools in Claude Code settings at <path> (added N new grants / all already authorized). Existing operator settings preserved.` as a banner. If the merge fails (malformed JSON, write permission denied), the runner halts cleanly into Phase 2 with `halt_reason: cli_bridge_permission_setup_failed_<code>` and a remediation message rather than spawning the bridged CLI with broken permissions.
+- **Brief frontmatter `cli.skip_permission_setup: true|false`** (default `false`, auto-setup ON). Opt-out for operators who manage their Claude Code settings via dotfiles / Ansible / company policy and don't want OpenWar touching the file.
+- **`CliBridgePermissionSetupError`**: typed error the runner catches to translate into the Phase 2 halt with the right `halt_reason`.
+- **Tests**: `tests/mcp/bridged-cli-settings.test.ts` (13 cases covering path resolution, file creation when absent, preservation of unrelated top-level keys, preservation of unrelated `permissions.allow` entries including other servers' grants, idempotency on repeat calls, partial-overlap append, malformed JSON / array-root JSON both halting with PARSE rather than clobbering, non-array `allow` gracefully replaced, empty-input no-op, parent-directory creation, valid-JSON-with-trailing-newline output). `tests/mcp/cli-bridge-wiring-permission-setup.test.ts` (4 cases covering the success banner, the opt-out short-circuit, the malformed-settings refusal path surfacing as `CliBridgePermissionSetupError(PARSE)`, and the non-Claude-Code bridged CLI bypass).
+
+### Changed
+
+- The v0.6.2 brief-validator warning text and the v0.6.2 runtime banner mirror text both updated. Old text: "Pre-authorize the brief's paths in the bridged CLI's permission settings to avoid this." New text: "v0.7.2+ auto-authorizes the openwar MCP tools in Claude Code's settings before spawn. Other permission categories (filesystem paths the bridged CLI's own tools touch, shell commands it runs internally) remain the operator's responsibility; set `cli.skip_permission_setup: true` to opt out of auto-authorization."
+- `docs/adapters.md` cli-bridge section explains the auto-setup, the preservation guarantee, and the opt-out path.
+
+### Phase 0 design picks (locked)
+
+1. **Settings file location.** `~/.claude/settings.json` on all platforms, verified against a real Claude Code install. Brief's per-OS path guesses (`%APPDATA%\Claude\claude.json`, `~/Library/Application Support/Claude/claude.json`) did not match the real layout.
+2. **Schema.** `{ permissions: { allow: string[] } }`. OpenWar appends the eight `mcp__openwar__openwar_<tool>` patterns explicitly, no wildcards (safer and dedup-friendly; operators who prefer wildcards can edit manually).
+3. **Other MCP servers' grants.** Untouched. Merge only adds to `permissions.allow`; everything else (other servers' MCP grants, Bash/Read/WebFetch entries, top-level keys, the `deny` array) is preserved verbatim.
+4. **Idempotency and reversibility.** Idempotent (dedupe on add). Not reversible (operator removes manually if they want to undo).
+
+### Out of scope (deferred)
+
+- **Gemini CLI permission auto-setup.** Gemini's MCP permission UX is unknown; defer to v0.7.3 if real testing surfaces the same friction.
+- **Codex CLI permission auto-setup.** Same. v0.7.4 or later.
+- **General "bridged CLI settings" framework.** Resist abstracting too early; Claude Code is the first and most-felt case. Abstract when there's a second.
+
+### Known smoke target
+
+The live cli-bridge → Claude Code → openwar MCP tool end-to-end run is the brief's smoke target. It exercises the v0.7.0 MCP server + v0.7.1 wiring + v0.7.2 permission auto-setup as one path. Operator validates on first attempt after install; if the smoke surfaces additional gaps, v0.7.3 covers them.
+
+### Notes for forkers and War Room integrators
+
+- Zero new runtime dependencies.
+- No state schema bump. No brief format change beyond the optional `cli.skip_permission_setup` field. Drop-in compatible with v0.7.1.
+- Default-on behavior is intentional: operators who don't read the changelog get the better experience automatically. The opt-out exists for power users.
+
 ## 0.7.1
 
 Codex CLI joins Claude Code and Gemini CLI in the v0.7.0 MCP-server-mode infrastructure. Brought up as v0.7.1 because Codex's TOML config format required a small hand-rolled serializer; deferred from v0.7.0 to keep that release focused on the architectural foundation.
