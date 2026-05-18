@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Adopt published `@pythonluvr/squire@1.0.0` as the cli-bridge runtime (previously vendored via a local link). `package.json` and the lockfile now resolve from the npm registry; the `src/adapters/cli-bridge.ts` import path was already `'@pythonluvr/squire'`, so no source change was required. Full test suite green against the published artifact.
+
 ## 0.10.1
 
 Two honest gaps closed without expanding scope. The hero rewrite makes the README's first screen match the v0.10.0 promise (the chat REPL is the front door, not a buried section). The cancellation primitive makes the runtime survive its most likely real-world annoyance, a slow tool call, without losing the trace or killing the session.
