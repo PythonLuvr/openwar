@@ -4,7 +4,7 @@
 
 <h1 align="center">OpenWar</h1>
 
-<p align="center"><strong>A framework and a runtime for agent behavior that doesn't go off the rails.</strong></p>
+<p align="center"><strong>Talk to your agent. The runtime keeps the phases honest, the destructives gated, and the trace intact.</strong></p>
 
 <p align="center">
   <a href="https://github.com/pythonluvr/openwar/releases"><img src="https://img.shields.io/github/v/release/pythonluvr/openwar?display_name=tag&sort=semver" alt="Latest release"></a>
@@ -14,19 +14,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-Most agent frameworks try to make agents feel smarter. OpenWar tries to make them behave better.
+`openwar chat` is the front door. Describe what you want in plain English; OpenWar asks clarifying questions when it needs to, proposes a plan, gets your approval, and executes through the same phase-gated runtime that hand-authored briefs use. No YAML required to start.
 
-It replaces eager-customer-service-rep defaults with the behavior of a senior peer. The agent confirms briefs before acting, breaks work into phases, asks before doing anything destructive, and writes like an adult who's busy. The runtime catches the moments where the agent would otherwise skip those rules and asks it to restate.
+Underneath the conversation is the discipline layer. Every assistant turn passes through deterministic detectors. Every destructive action stops at an operator gate. Every tool call writes to a replayable trace. The agent does not get smarter; it gets harder to derail.
 
-Discipline, not intelligence. Kubernetes for agents, not a smarter brain.
-
-<p align="center">
-  <img src="branding/warbit-story/warbit-04-chaos.png" alt="WarBit buried in TODOs and merge conflicts" width="280" />
-  <br />
-  <em>Default agent behavior. Sycophantic, eager, drowning in half-finished context.</em>
-</p>
-
-## Just talk to it
+## Start with a conversation
 
 If you have a BYOK API key (Anthropic, OpenAI, Gemini, Grok, or any OpenAI-compatible endpoint):
 
@@ -35,9 +27,15 @@ export ANTHROPIC_API_KEY=...
 openwar chat
 ```
 
-Describe what you want in plain English. OpenWar asks clarifying questions, proposes a plan, gets your approval, executes through the same phase machine that hand-authored briefs use, and asks before doing anything destructive. At the end, optionally save the conversation as a reusable brief.
+A turn looks like this:
 
-The discipline layer runs underneath, invisible. Phase 3 still fires. trace.ndjson still records. The user just talks.
+```text
+> read src/auth.ts and tell me the three biggest holes you see
+Reading src/auth.ts (412 lines)... three issues. Want me to draft a brief
+that patches them, or just print the list?
+```
+
+OpenWar asks clarifying questions if the request is ambiguous, proposes a plan, gets your approval, executes through the phase machine, and asks again before any destructive action (a write, a shell command, an HTTP fetch). At the end, optionally save the conversation as a reusable brief. The trace at `~/.openwar/sessions/<id>.trace.ndjson` records the whole thing.
 
 Hand-authored briefs (`openwar run brief.md`) keep working unchanged for power users. Full chat docs: [`docs/chat.md`](./docs/chat.md).
 
@@ -143,6 +141,12 @@ If the agent skips the Confirmation Summary, the runtime asks it to restate befo
 Behavioral overlays are easy to ignore. A model that's been told "always produce a Confirmation Summary" will sometimes skip it under context pressure or specific phrasing. The runtime catches the skip and asks the model to restate.
 
 System prompts cost nothing to install and work with any agent. The runtime is heavier, but it actually enforces the rules.
+
+<p align="center">
+  <img src="branding/warbit-story/warbit-04-chaos.png" alt="WarBit buried in TODOs and merge conflicts" width="280" />
+  <br />
+  <em>Default agent behavior. Sycophantic, eager, drowning in half-finished context. The runtime is what stops this.</em>
+</p>
 
 <p align="center">
   <img src="branding/warbit-story/warbit-03-success.png" alt="WarBit celebrating in front of a 'SUCCESS' screen" width="280" />
