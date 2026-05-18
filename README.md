@@ -26,17 +26,7 @@ Discipline, not intelligence. Kubernetes for agents, not a smarter brain.
   <em>Default agent behavior. Sycophantic, eager, drowning in half-finished context.</em>
 </p>
 
-## What OpenWar is not
-
-Not a smarter model. OpenWar runs on top of whatever agent you already use: a local CLI agent (Claude Code, Codex CLI, Gemini CLI, aider) via the cli-bridge adapter, or any BYOK API (Anthropic, OpenAI, Gemini, Grok, or openai-compat for local Ollama and vLLM). The model's reasoning quality is the model's problem.
-
-Not a memory system or knowledge base. Persistent project memory is planned for v0.6, but the current scope is behavioral discipline, not cognitive infrastructure.
-
-Not an autonomous-agent platform. OpenWar's whole design assumes the operator is in the loop. Auto-pilot mode just makes the loop quieter; it never removes the operator's right to stop the run.
-
----
-
-## New in v0.10: just talk to it
+## Just talk to it
 
 If you have a BYOK API key (Anthropic, OpenAI, Gemini, Grok, or any OpenAI-compatible endpoint):
 
@@ -160,23 +150,17 @@ System prompts cost nothing to install and work with any agent. The runtime is h
   <em>Phase 4 completion. WarBit ships.</em>
 </p>
 
+## What OpenWar is not
+
+Not a smarter model. OpenWar runs on top of whatever agent you already use: a local CLI agent (Claude Code, Codex CLI, Gemini CLI, aider) via the cli-bridge adapter, or any BYOK API (Anthropic, OpenAI, Gemini, Grok, or openai-compat for local Ollama and vLLM). The model's reasoning quality is the model's problem.
+
+Not a self-modifying agent. The framework can propose adjustments to its own behavior (`openwar learn`), but the operator commits the change. The agent never edits the rules that constrain the agent.
+
+Not an autonomous-agent platform. OpenWar's whole design assumes the operator is in the loop. Auto-pilot mode just makes the loop quieter; it never removes the operator's right to stop the run.
+
 ## Versioning
 
-Current: **v0.10.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
-
-- v0.1: framework doc only (single markdown file).
-- v0.2: runtime, CLI, BYOK adapters.
-- v0.3: native tools + MCP client + Phase 3 destructive flag for unauthorized tool calls.
-- v0.4: multi-agent orchestration. Planner / executor / reviewer / critic. Budgets. Resumable mid-state sessions.
-- v0.5: cli-bridge adapter. OpenWar coordinates CLI agents (Claude Code, Codex CLI, Gemini CLI, aider) the same way it coordinates LLM adapters.
-- v0.5.1: per-role adapter mixing. A single brief can pin each role to its own adapter and model.
-- v0.6: persistent project memory across briefs.
-- v0.7: cli-bridge MCP-server-mode (Claude Code, Gemini CLI, Codex CLI) + Claude Code permission auto-setup + symmetric memory tools.
-- v0.8: structured trace event stream, focused `openwar inspect` modes, `openwar replay` (no LLM calls), opt-in local dashboard.
-- v0.9.0: `openwar history` (descriptive analytics over accumulated v0.8 traces). Read-only.
-- v0.9.1: adaptive autonomy plumbing. `openwar learn`, `learned_profile:` frontmatter, detector sensitivity, three new trace events. Conservative thresholds: effectively a no-op until run ~10. v0.9.2+ patch releases tune the constants.
-- v0.10.0: `openwar chat`. Conversation-driven entry to the same runtime. Tool-call intent contract; conservative auto-authorization; saved-brief round trip.
-- v0.10.1 (planned): hero rewrite + mid-tool-call cancellation, pending adoption signal from v0.10.0 use.
+Current: **v0.11.0**. Full version history and release notes in [CHANGELOG.md](./CHANGELOG.md).
 
 Drop-in upgrades preserve compatibility within a major version. Major bumps may rename phases or change the brief format.
 
