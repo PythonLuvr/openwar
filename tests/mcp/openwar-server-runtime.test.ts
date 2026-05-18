@@ -64,6 +64,9 @@ test("openwar-server: tools/list returns native tools namespaced as openwar:*", 
   assert.ok(names.includes("openwar:write_file"));
   assert.ok(names.includes("openwar:read_project_memory"));
   assert.ok(names.includes("openwar:write_project_memory"));
+  // v0.7.3: list_project_memory must also be exposed (it's the symmetric
+  // verification surface the brief calls for).
+  assert.ok(names.includes("openwar:list_project_memory"));
 });
 
 test("openwar-server: unauthorized tool call returns isError with 'OpenWar denied' prefix", async () => {

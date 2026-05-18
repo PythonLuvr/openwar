@@ -144,7 +144,7 @@ System prompts cost nothing to install and work with any agent. The runtime is h
 
 ## Versioning
 
-Current: **v0.7.2**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
+Current: **v0.7.3**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
 - v0.1: framework doc only (single markdown file).
 - v0.2: runtime, CLI, BYOK adapters.

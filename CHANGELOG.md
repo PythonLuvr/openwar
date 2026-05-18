@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.7.3
+
+Symmetric memory access tools. Last night's live test surfaced an asymmetry: `openwar:write_project_memory` worked through MCP forwarding, but in-namespace verification was not possible because the general-purpose `read_file` and `list_dir` tools are workdir-sandboxed, while the memory store lives at `~/.openwar/projects/<slug>/` (sibling to any workdir, by v0.6 design). The bridged agent that hit the wall did the right thing (declared Phase 2 instead of escaping the sandbox), but a brief that asks the agent to verify what was written had no clean path. v0.7.3 closes that with two memory-specific tools that have the same scoping as `write_project_memory`.
+
+### Added
+
+- **`openwar:list_project_memory`** (new native tool). Summarizes a project's memory store. Required `project: string`; optional `category: "decisions" | "knowledge" | "constraints"` (default: all three with per-category counts including empty ones); optional `since: <ISO>` timestamp filter and `limit` (default 100, capped at 500). Returns `summary_or_excerpt` per entry truncated to 200 chars: `summary` for decisions, `content` for knowledge, `rule` for constraints (per the brief's Phase 0 Q3). Does NOT return full bodies; the agent uses this to find ids and follows up with `read_project_memory` for the full content.
+- **`openwar:read_project_memory` extension.** Adds optional `project: string` argument (falls back to `ctx.project_slug` for v0.6 back-compat) and optional `id: string` argument (returns exactly that entry when matched). Bumps default `limit` from 20 to 50 per the brief; cap raised to 500.
+- **Claude Code permission allowlist updated** in `OPENWAR_MCP_TOOL_PATTERNS`: `mcp__openwar__openwar_list_project_memory` is now pre-authorized by v0.7.2's auto-setup alongside the eight existing entries (total 9).
+- **Tests**: `tests/tools/read_project_memory.test.ts` (10 cases covering explicit-project routing, ctx-fallback back-compat, NO_PROJECT failure when neither is available, id-hit and id-miss behavior, missing-project graceful empty, limit cap at 500, limit=0 means cap-bounded, default-limit silence in response). `tests/tools/list_project_memory.test.ts` (10 cases covering registry exposure, schema requireds, per-category counts on all-categories mode, single-category mode, per-category accessor for `summary_or_excerpt`, 200-char truncation with ellipsis, `since` filter, missing-`project` rejection, response entry shape, missing-project returns three empty sections). `tests/mcp/openwar-server-runtime.test.ts` extended with the new tool name in tools/list. `tests/mcp/bridged-cli-settings.test.ts` count assertions migrated to anchor on `OPENWAR_MCP_TOOL_PATTERNS.length` rather than hardcoded numbers so future tool additions don't break the test.
+
+### Out of scope (per the brief)
+
+- Memory pruning operations for agents. `openwar memory remove` exists as a CLI subcommand from v0.6; agents don't get a destructive memory operation in v0.7.3. v0.8.x discussion if a brief needs it.
+- Semantic search across memory. Reverse-chronological + id-based lookup only. Retrieval scoring stays deferred from v0.6.
+- Cross-project memory access. Each call is scoped to one project slug. No "list every project's memory" operation.
+
+### Notes for forkers and War Room integrators
+
+- Zero new runtime dependencies; both tools share v0.6's `src/state/memory.ts` infrastructure.
+- No state schema bump. No brief format change. Drop-in compatible with v0.7.2.
+- Total native tool count grows from 8 to 9. The MCP server runtime iterates `NATIVE_TOOLS` and exposes everything under the `openwar:*` namespace; no separate registration step.
+
 ## 0.7.2
 
 Bridged-CLI permission auto-setup. v0.7.1's MCP forwarding wired the protocol correctly, but real-world live testing surfaced the next gap: the bridged Claude Code halts at its own permission gate on the first MCP tool call (`Claude requested permissions to use mcp__openwar__openwar_<tool>, but you haven't granted it yet.`). Claude Code treats external MCP tools as separate-trust by design; neither `--permission-mode bypassPermissions` nor `--allowedTools` bypasses them. v0.7.2 ships the automation that pre-authorizes the openwar MCP tools at the bridged CLI's settings file before spawn.

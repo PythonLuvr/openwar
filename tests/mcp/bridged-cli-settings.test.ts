@@ -23,11 +23,17 @@ test.after(() => {
   rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
-test("OPENWAR_MCP_TOOL_PATTERNS lists all eight native tools as mcp__openwar__openwar_*", () => {
-  assert.equal(OPENWAR_MCP_TOOL_PATTERNS.length, 8);
+test("OPENWAR_MCP_TOOL_PATTERNS lists all nine native tools as mcp__openwar__openwar_*", () => {
+  // v0.7.3 added list_project_memory; total = 9 (6 generic + 3 memory).
+  assert.equal(OPENWAR_MCP_TOOL_PATTERNS.length, 9);
   for (const p of OPENWAR_MCP_TOOL_PATTERNS) {
     assert.match(p, /^mcp__openwar__openwar_/);
   }
+  // Sanity: the three memory tools must be in the allowlist; pre-spawn
+  // permission setup is the whole point of v0.7.2 + v0.7.3 together.
+  assert.ok(OPENWAR_MCP_TOOL_PATTERNS.includes("mcp__openwar__openwar_read_project_memory"));
+  assert.ok(OPENWAR_MCP_TOOL_PATTERNS.includes("mcp__openwar__openwar_write_project_memory"));
+  assert.ok(OPENWAR_MCP_TOOL_PATTERNS.includes("mcp__openwar__openwar_list_project_memory"));
 });
 
 test("claudeSettingsPath: resolves to ~/.claude/settings.json", () => {
@@ -36,11 +42,14 @@ test("claudeSettingsPath: resolves to ~/.claude/settings.json", () => {
   assert.ok(p.startsWith(TMP_HOME), `expected path under TMP_HOME, got ${p}`);
 });
 
-test("merge: creates the file when absent with the eight grants", async () => {
+test("merge: creates the file when absent with all native-tool grants", async () => {
   const path = join(TMP_HOME, "case-create.json");
   const result = await mergeClaudeSettings(path, OPENWAR_MCP_TOOL_PATTERNS);
   assert.equal(result.createdNew, true);
-  assert.equal(result.added.length, 8);
+  // Count matches the canonical pattern list; v0.7.3 bumped from 8 to 9 with
+  // the addition of list_project_memory. Anchoring on the list rather than
+  // a hardcoded number keeps future additions from breaking the test.
+  assert.equal(result.added.length, OPENWAR_MCP_TOOL_PATTERNS.length);
   assert.equal(result.alreadyPresent.length, 0);
   const written = JSON.parse(readFileSync(path, "utf8")) as { permissions: { allow: string[] } };
   assert.deepEqual(written.permissions.allow.sort(), [...OPENWAR_MCP_TOOL_PATTERNS].sort());
@@ -86,7 +95,7 @@ test("merge: idempotent on second call (no duplicates)", async () => {
   await mergeClaudeSettings(path, OPENWAR_MCP_TOOL_PATTERNS);
   const second = await mergeClaudeSettings(path, OPENWAR_MCP_TOOL_PATTERNS);
   assert.equal(second.added.length, 0);
-  assert.equal(second.alreadyPresent.length, 8);
+  assert.equal(second.alreadyPresent.length, OPENWAR_MCP_TOOL_PATTERNS.length);
   const after = JSON.parse(readFileSync(path, "utf8")) as { permissions: { allow: string[] } };
   // No duplicates: count equals unique count.
   assert.equal(after.permissions.allow.length, new Set(after.permissions.allow).size);
@@ -94,23 +103,21 @@ test("merge: idempotent on second call (no duplicates)", async () => {
 
 test("merge: appends partial-overlap correctly", async () => {
   const path = join(TMP_HOME, "case-partial.json");
-  // Pre-seed with three of the eight openwar patterns plus an unrelated.
-  writeFileSync(path, JSON.stringify({
-    permissions: {
-      allow: [
-        "Bash(echo:*)",
-        "mcp__openwar__openwar_read_file",
-        "mcp__openwar__openwar_write_file",
-        "mcp__openwar__openwar_list_dir",
-      ],
-    },
-  }), "utf8");
+  // Pre-seed with three of the openwar patterns plus an unrelated entry.
+  const preExisting = [
+    "Bash(echo:*)",
+    "mcp__openwar__openwar_read_file",
+    "mcp__openwar__openwar_write_file",
+    "mcp__openwar__openwar_list_dir",
+  ];
+  writeFileSync(path, JSON.stringify({ permissions: { allow: preExisting } }), "utf8");
   const result = await mergeClaudeSettings(path, OPENWAR_MCP_TOOL_PATTERNS);
-  assert.equal(result.added.length, 5);
+  // Three of the openwar patterns are already present; the rest get added.
   assert.equal(result.alreadyPresent.length, 3);
+  assert.equal(result.added.length, OPENWAR_MCP_TOOL_PATTERNS.length - 3);
   const after = JSON.parse(readFileSync(path, "utf8")) as { permissions: { allow: string[] } };
-  // All eight openwar patterns + the unrelated entry = 9 distinct.
-  assert.equal(after.permissions.allow.length, 9);
+  // All openwar patterns + the unrelated entry, all distinct.
+  assert.equal(after.permissions.allow.length, OPENWAR_MCP_TOOL_PATTERNS.length + 1);
   assert.ok(after.permissions.allow.includes("Bash(echo:*)"));
 });
 
@@ -151,7 +158,7 @@ test("merge: existing permissions.allow as non-array gets replaced cleanly (trea
   const after = JSON.parse(readFileSync(path, "utf8")) as { theme: string; permissions: { allow: string[]; deny: string[] } };
   assert.equal(after.theme, "dark");
   assert.deepEqual(after.permissions.deny, ["something"]);
-  assert.equal(after.permissions.allow.length, 8);
+  assert.equal(after.permissions.allow.length, OPENWAR_MCP_TOOL_PATTERNS.length);
 });
 
 test("merge: empty patternsToAdd is a no-op (returns sane result)", async () => {

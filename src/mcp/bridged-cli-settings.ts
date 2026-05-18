@@ -21,7 +21,8 @@ import { randomBytes } from "node:crypto";
 
 // v0.7 native tools as Claude Code sees them, after MCP namespace mangling.
 // Server name "openwar" + tool name "openwar:<tool>" becomes the canonical
-// mcp__openwar__openwar_<tool> permission pattern (colon → underscore).
+// mcp__openwar__openwar_<tool> permission pattern (colon -> underscore).
+// v0.7.3 added list_project_memory; total exposed tool count = 9.
 export const OPENWAR_MCP_TOOL_PATTERNS: readonly string[] = [
   "mcp__openwar__openwar_read_file",
   "mcp__openwar__openwar_write_file",
@@ -31,6 +32,7 @@ export const OPENWAR_MCP_TOOL_PATTERNS: readonly string[] = [
   "mcp__openwar__openwar_apply_patch",
   "mcp__openwar__openwar_read_project_memory",
   "mcp__openwar__openwar_write_project_memory",
+  "mcp__openwar__openwar_list_project_memory",
 ];
 
 // Real Claude Code settings file location, verified against a Claude Code

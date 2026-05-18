@@ -1,6 +1,6 @@
 # Tools and MCP
 
-The OpenWar runtime ships six native tools and a hand-rolled MCP client. Every tool call goes through a four-step pipeline before it executes:
+The OpenWar runtime ships nine native tools and a hand-rolled MCP client. Every tool call goes through a four-step pipeline before it executes:
 
 1. **Schema translation** in the adapter to the provider's native function-calling format.
 2. **Authorization check** against the brief's `authorized_costs` and any session-approved categories.
@@ -19,6 +19,9 @@ If a tool call requires an unauthorized category, the runtime halts into Phase 3
 | `shell_exec` | `shell_exec` | SIGTERM then SIGKILL on timeout. `--no-shell` disables entirely. |
 | `http_fetch` | `http_fetch` | HTTPS only by default. Optional `~/.openwar/http-allow.json` host allowlist. |
 | `apply_patch` | `filesystem_write` | Unified-diff applier. Rolls back on hunk failure. |
+| `read_project_memory` | `filesystem_read` | v0.6+. Reaches `~/.openwar/projects/<slug>/<category>.jsonl` directly (not workdir-sandboxed). v0.7.3 added optional `project` + `id` args. |
+| `write_project_memory` | `filesystem_write` | v0.6+. Appends an entry to the project's memory store. Same scoping as `read_project_memory`. |
+| `list_project_memory` | `filesystem_read` | v0.7.3. Summarizes a project's memory store; returns per-category counts and 200-char excerpts. Use it to find ids; follow up with `read_project_memory` for full bodies. |
 
 List them with:
 
