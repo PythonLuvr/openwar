@@ -23,6 +23,10 @@ const TRACKED = [
   ["src/cli/inspect.ts", 85],
   ["src/cli/replay.ts", 85],
   ["src/dashboard/", 85],
+  // v0.9.0 history surfaces.
+  ["src/state/history.ts", 85],
+  ["src/state/history-report.ts", 85],
+  ["src/cli/history.ts", 85],
 ];
 
 function findTests(dir, out = []) {

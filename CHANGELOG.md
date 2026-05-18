@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.9.0
+
+`openwar history`: descriptive analytics over accumulated v0.8 traces. Read-only by design.
+
+Originally scoped as "adaptive autonomy" with detector sensitivity overrides, recommended phase budgets, and a runtime-applied `learned_profile`. The brief was split during Phase 0 review on 2026-05-18 because the data foundation did not yet exist: v0.8.0 had landed three hours earlier and zero real traces accumulated against any project. Adapting against synthetic or thin samples would have shipped wrong-shaped defaults baked into runtime behavior. The original brief's own anti-gaming clause warned against this exact failure mode.
+
+v0.9.0 ships the inspection layer. v0.9.1 will ship the prescriptive layer once one to two release cycles of v0.9.0 have accumulated real traces and we can calibrate heuristics against actual distributions.
+
+### Added
+
+- **`openwar history <project_slug>` subcommand**. Reads every trace.ndjson whose session metadata carries the slug, computes:
+  - Per-tool call counts + last-used timestamps + "dead" flag (zero calls when sample >= 3).
+  - Per-phase tool-call P50 / P90 / max, summed across runs. Tool-call attribution uses a most-recent-`phase_enter` walker so calls fall into the right bucket.
+  - Per-detector total fires + fires-per-run + runs-with-fire.
+  - Per-phase total + average `duration_ms` from `phase_exit` events.
+  - Operator-readable notes: thin-sample warnings, dead-tool callouts, corrupted-line totals, v0.9.0-is-descriptive-only banner.
+  - `--since <ISO>` filter, `--min-samples N` threshold (>= 2), `--json` deterministic output.
+- **`openwar inspect <brief_id> --history`**. Brief-scoped surface: looks up the session's project slug and renders the same history report.
+- **`docs/learning.md`** (new). Locks per-detector false-positive semantics for v0.9.1 even though v0.9.0 does not use them. Half a day of design work now while the question is fresh is cheaper than rebuilding the analysis in v0.9.1 against muscle-memory assumptions. Also documents the v0.9.0 vs v0.9.1 scope split and the safety-critical flag plan.
+- **24 new tests** (`tests/state/history.test.ts`, `tests/cli/history.test.ts`, `tests/cli/inspect-history.test.ts`). Total 514 (was 490 at v0.8.0). Math correctness, determinism guarantees, filter semantics, schema_version anchoring, traceless-session reporting, brief-to-project lookup.
+- **Library exports** (`src/index.ts`): `summarizeRun`, `aggregateRuns`, `buildHistoryReport`, `runHistory`, `formatHistoryReport`, `quantile`, `stringifyDeterministic`, plus the `RunSummary` / `HistoryReport` / row types. Integrators (War Room, etc.) can build their own reporting layers on top.
+
+### Design notes (Phase 0 deviations approved)
+
+- **Renamed from "adaptive autonomy" to "history".** A capability whose first impression is "tells you what your runs look like" should not ship under a name that promises runtime behavior change. v0.9.1 reclaims "adaptive autonomy" when it actually adapts.
+- **No `learned_profile` schema, no runner integration, no detector sensitivity refactor, no new trace events.** All deferred to v0.9.1. v0.9.0 carries no forward-compat stubs in the schema either; cleaner to add fields in v0.9.1 with real data informing their shape.
+- **The only confident heuristic in v0.9.0 is dead-tool detection.** Everything else is descriptive math (counts, quantiles, sums) with no thresholds attached. P50 + 1.5 * IQR for phase budgets is deferred because the IQR shape on real long-tail distributions is unknown.
+- **Phase-attribution walker built now, inherited by v0.9.1.** Tool calls credit to the most-recent `phase_enter`. v0.9.1's budget math reuses the same walker.
+- **Determinism is load-bearing.** `source_runs` arrays sort lexicographically. JSON output goes through `stringifyDeterministic` with sorted object keys. Same trace inputs produce the same report bit-for-bit (modulo `generated_at` timestamp). Tested in `tests/state/history.test.ts`.
+
+### Out of scope (deferred to v0.9.1 or later)
+
+- `openwar learn` subcommand and the `learned.json` profile schema.
+- `learned_profile:` brief frontmatter field.
+- Detector sensitivity overrides (loose / strict / disabled).
+- Recommended phase budgets.
+- Runner-side application of any of the above.
+- The three planned trace events (`learned_profile_applied`, `learned_sensitivity_consulted`, `learned_budget_consulted`).
+- Recommendation expiry, A/B harness for sensitivity tuning, cross-project learning.
+
+### Notes for forkers and War Room integrators
+
+- v0.9.0 is fully backwards compatible with v0.8.x. No new brief frontmatter fields. No runtime behavior changes. Existing sessions inspect identically; the new `--history` surface is purely additive.
+- Operators on v0.8.x can upgrade to v0.9.0 with no migration cost. Accumulated v0.8 traces are immediately usable as history input.
+- v0.9.1 (when it ships) will use the same trace format and the same phase-attribution walker; profiles will read this v0.9.0 history data plus locked FP semantics from `docs/learning.md`.
+
 ## 0.8.0
 
 Observability and tracing. The first version that gives operators (and integrators like War Room) the structured data they need to actually understand what their agents are doing. Everything before v0.8 was about getting the runtime to behave correctly. v0.8 makes its behavior visible.

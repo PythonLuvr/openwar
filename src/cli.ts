@@ -15,6 +15,8 @@ import { loadGlobalMcpConfig, splitCommand, MCPClient, StdioTransport } from "./
 import { readTrace } from "./state/trace.js";
 import * as inspect from "./cli/inspect.js";
 import { runReplay } from "./cli/replay.js";
+import { runHistory, formatHistoryReport } from "./cli/history.js";
+import { buildHistoryReport } from "./state/history-report.js";
 
 interface ParsedFlags {
   positional: string[];
@@ -88,8 +90,10 @@ Usage:
   openwar inspect <brief_id> --detectors
   openwar inspect <brief_id> --tools
   openwar inspect <brief_id> --mcp
+  openwar inspect <brief_id> --history                   # project history for this brief's slug
   openwar replay <brief_id>
   openwar dashboard [--port <n>]
+  openwar history <project_slug> [--since <ISO>] [--min-samples N] [--json]
   openwar validate <brief.md>
   openwar plan <brief.md> [--adapter <id>] [--model <name>]
   openwar roles
@@ -341,7 +345,7 @@ function commandInspect(parsed: ParsedFlags): number {
   return 0;
 }
 
-type InspectMode = "trace" | "timing" | "cost" | "detectors" | "tools" | "mcp";
+type InspectMode = "trace" | "timing" | "cost" | "detectors" | "tools" | "mcp" | "history";
 
 function resolveInspectMode(flags: Record<string, string | boolean>): InspectMode | null {
   if (flags["trace"] === true) return "trace";
@@ -350,11 +354,24 @@ function resolveInspectMode(flags: Record<string, string | boolean>): InspectMod
   if (flags["detectors"] === true) return "detectors";
   if (flags["tools"] === true) return "tools";
   if (flags["mcp"] === true) return "mcp";
+  if (flags["history"] === true) return "history";
   return null;
 }
 
 function commandInspectMode(briefId: string, mode: InspectMode, flags: Record<string, string | boolean>): number {
   const w = process.stdout.write.bind(process.stdout);
+  // v0.9.0: --history is project-scoped. Look up the session's project slug
+  // and render the full history report for that project.
+  if (mode === "history") {
+    const session = readSession(briefId);
+    if (!session) {
+      process.stderr.write(`openwar inspect: no session found for "${briefId}"\n`);
+      return 1;
+    }
+    const { report, traceless_brief_ids } = buildHistoryReport({ slug: session.meta.project });
+    w(formatHistoryReport(report, { traceless_brief_ids }));
+    return 0;
+  }
   const { events, empty, corrupted_lines } = readTrace(briefId);
   if (empty) {
     w(`No trace events for "${briefId}". Sessions written before v0.8 only have a transcript; run with the latest openwar to capture traces.\n`);
@@ -675,6 +692,24 @@ async function commandMemory(parsed: ParsedFlags): Promise<number> {
   return 2;
 }
 
+function commandHistory(parsed: ParsedFlags): number {
+  const slug = parsed.positional[1];
+  if (!slug) {
+    process.stderr.write("openwar history: missing <project_slug>\n");
+    return 2;
+  }
+  const opts: Parameters<typeof runHistory>[2] = {};
+  if (typeof parsed.flags["since"] === "string") opts.since = parsed.flags["since"];
+  if (typeof parsed.flags["min-samples"] === "string") {
+    const n = Number(parsed.flags["min-samples"]);
+    if (Number.isFinite(n) && n >= 2) opts.minSamples = n;
+  }
+  if (parsed.flags["json"] === true) opts.json = true;
+  const write = process.stdout.write.bind(process.stdout);
+  runHistory(slug, write, opts);
+  return 0;
+}
+
 function commandReplay(parsed: ParsedFlags): number {
   const briefId = parsed.positional[1];
   if (!briefId) {
@@ -838,6 +873,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return commandReplay(parsed);
     case "dashboard":
       return await commandDashboard(parsed);
+    case "history":
+      return commandHistory(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;

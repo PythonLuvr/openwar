@@ -65,3 +65,20 @@ export {
   formatMcp,
 } from "./cli/inspect.js";
 export { runReplay, type ReplayOptions, type ReplayResult } from "./cli/replay.js";
+
+// v0.9.0: descriptive history over accumulated traces. Integrators can
+// build their own reporting on top of these. v0.9.1 will add prescriptive
+// adaptation; this release is read-only.
+export {
+  summarizeRun,
+  aggregateRuns,
+  quantile,
+  stringifyDeterministic,
+  type RunSummary,
+  type HistoryReport,
+  type ToolUsageRow,
+  type PhaseDistributionRow,
+  type DetectorRow,
+} from "./state/history.js";
+export { buildHistoryReport, type BuildReportOptions, type BuildReportResult } from "./state/history-report.js";
+export { runHistory, formatHistoryReport, type HistoryRenderOptions, type HistoryRunResult } from "./cli/history.js";

@@ -445,7 +445,7 @@ The runner falls back to v0.6 stdout-only cli-bridge: the bridged CLI sees only 
 
 ## Versioning
 
-OpenWar is versioned. Current: v0.8.0 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing + persistent project memory + MCP-server-mode for cli-bridge + structured trace event stream with focused inspect modes, replay, and local dashboard). Adaptive autonomy via operator policies in v0.9, built on v0.8 trace history. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
+OpenWar is versioned. Current: v0.9.0 (framework doc + runtime + multi-agent orchestration + cli-bridge adapter + per-role adapter mixing + persistent project memory + MCP-server-mode for cli-bridge + structured trace event stream with focused inspect modes, replay, and local dashboard + descriptive history analytics via `openwar history`). Adaptive autonomy via operator-applied learned profiles ships in v0.9.1 once history traces accumulate against real projects. Drop-in upgrades preserve compatibility within a major version; major bumps may rename phases or change the brief format. The runtime package matches the framework doc's version one-for-one.
 
 ### Observability (v0.8+)
 

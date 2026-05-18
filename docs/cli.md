@@ -25,6 +25,11 @@ openwar inspect <brief_id> --tools
 openwar inspect <brief_id> --mcp
 openwar replay <brief_id>                                 # v0.8 LLM-free replay
 openwar dashboard [--port <n>]                            # v0.8 local web view
+openwar history <project_slug>                            # v0.9 descriptive history
+openwar history <project_slug> --since <ISO>
+openwar history <project_slug> --min-samples N
+openwar history <project_slug> --json
+openwar inspect <brief_id> --history                      # v0.9 brief-scoped history
 openwar validate <brief.md>
 openwar roles                                # list registered roles
 openwar adapters

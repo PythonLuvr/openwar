@@ -125,6 +125,7 @@ If the agent skips the Confirmation Summary, the runtime asks it to restate befo
 | Adapters (Anthropic, OpenAI, Gemini, Grok, openai-compat, cli-bridge) | [`docs/adapters.md`](./docs/adapters.md) |
 | Native tools and MCP | [`docs/tools.md`](./docs/tools.md) |
 | Observability and tracing (v0.8+) | [`docs/observability.md`](./docs/observability.md) |
+| Learning from run history (v0.9+) | [`docs/learning.md`](./docs/learning.md) |
 | Multi-agent orchestration (roles, budgets, per-role adapter mixing) | [`docs/multi-agent.md`](./docs/multi-agent.md) |
 | Use OpenWar as a library (TypeScript) | [`docs/library.md`](./docs/library.md) |
 | System-prompt-only path (no install) | [`docs/system-prompt.md`](./docs/system-prompt.md) |
@@ -145,7 +146,7 @@ System prompts cost nothing to install and work with any agent. The runtime is h
 
 ## Versioning
 
-Current: **v0.8.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
+Current: **v0.9.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
 - v0.1: framework doc only (single markdown file).
 - v0.2: runtime, CLI, BYOK adapters.
@@ -156,7 +157,8 @@ Current: **v0.8.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 - v0.6: persistent project memory across briefs.
 - v0.7: cli-bridge MCP-server-mode (Claude Code, Gemini CLI, Codex CLI) + Claude Code permission auto-setup + symmetric memory tools.
 - v0.8: structured trace event stream, focused `openwar inspect` modes, `openwar replay` (no LLM calls), opt-in local dashboard.
-- v0.9 (planned): operator-policy-driven adaptive autonomy on top of v0.8 trace history.
+- v0.9.0: `openwar history` (descriptive analytics over accumulated v0.8 traces). Read-only.
+- v0.9.1 (planned): adaptive autonomy. Detector sensitivity overrides, recommended phase budgets, runtime-applied learned profiles. Deferred until v0.9.0 traces accumulate against real projects so heuristics calibrate against actual distributions rather than synthetic ones.
 
 Drop-in upgrades preserve compatibility within a major version. Major bumps may rename phases or change the brief format.
 
