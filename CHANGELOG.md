@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.10.1
+
+Two honest gaps closed without expanding scope. The hero rewrite makes the README's first screen match the v0.10.0 promise (the chat REPL is the front door, not a buried section). The cancellation primitive makes the runtime survive its most likely real-world annoyance, a slow tool call, without losing the trace or killing the session.
+
+### Added
+
+- **Mid-tool-call cancellation across every native tool.** `read_file`, `write_file`, `list_dir`, `shell_exec`, `http_fetch`, `apply_patch`, and the three project-memory tools all honor a `ctx.signal: AbortSignal` provided by the runtime. `shell_exec` SIGTERMs the child with a 3-second grace window before SIGKILL (longer than the 2-second timeout grace so well-behaved children have time to flush). `http_fetch` aborts the underlying `fetch` and surfaces whatever bytes arrived as `partial_output`. `apply_patch` captures pre-images during planning and rolls back already-written files if cancellation fires mid-pass-2, leaving the tree in its pre-call state. The remaining tools honor `isAborted(ctx.signal)` at entry and at relevant async boundaries.
+- **`Session` handle on active runs.** New `Session` interface with `cancelCurrentToolCall(): Promise<boolean>`. Returns `true` if a call was in flight and cancellation was fired (and awaits the executor's actual exit before resolving), `false` synchronously if no tool call was active.
+- **`RunOptions.signal?: AbortSignal`**. Caller-provided abort signal that fires the registry's cancel path. Existing callers that omit the field see no behavior change.
+- **`RunOptions.onSession?: (session: Session) => void`**. Callback invoked synchronously once the runner has the live `Session` handle, before the phase machine starts. The chat REPL uses it to wire Ctrl-C to `cancelCurrentToolCall()`; external programs use it the same way.
+- **`tool_cancelled` trace event.** New variant in the trace union. Fields: `call_id`, `tool_name`, `cancellation_source` (`operator_signal` / `timeout` / `runtime_shutdown`), `partial_output` (bytes the tool produced before the abort; empty string for tools that buffer until completion). The companion `tool_result` event is NOT emitted for a cancelled call; `tool_cancelled` carries everything an inspect formatter needs.
+- **`TRACE_SCHEMA_VERSION` bumped to 2.** Additive bump. Old readers ignore unknown event types; new readers consume `tool_cancelled` directly. Old traces stamped `version: 1` remain valid.
+- **Chat REPL Ctrl-C handling.** First Ctrl-C with an in-flight tool call fires the cancellation and prints "Cancelling tool call... (press Ctrl-C again within 2s to exit)". Second Ctrl-C within 2 seconds escalates to a normal exit (the v0.10.0 SIGINT path, with chat-log save). Ctrl-C with no in-flight tool call falls through to the v0.10.0 exit path unchanged.
+- **MCP-forwarded cancellation with 5-second grace.** When the operator cancels and the in-flight call is to an MCP server, the runtime fires the abort signal, waits 5 seconds for the downstream server to honor it, then synthesizes a local `tool_cancelled` event and unblocks the phase machine. The orphaned MCP call may continue running in the background; that is the server's bug, not the runtime's.
+- **Coordinator interaction.** Cancellation inside a multi-agent coordinator ends the role's current turn with the cancelled tool-result and proceeds; the coordinator does NOT auto-retry. Cross-role cancellation (planner cancels executor mid-call) is out of scope per the brief.
+- **README hero rewrite.** Tagline becomes "Talk to your agent. The runtime keeps the phases honest, the destructives gated, and the trace intact." The lede leads with the conversational front door; the discipline-not-intelligence framing is ordered second. The "Just talk to it" section is renamed "Start with a conversation" and expanded with a one-input / one-output sample turn. The WarBit chaos image moves out of the hero down to the "Why both a framework AND a runtime" section as the without-discipline contrast.
+- **32 new tests** across `tests/tools/cancellation.test.ts`, `tests/runner/cancel.test.ts`, `tests/cli/chat-cancel.test.ts`, and `tests/state/tool-cancelled-event.test.ts`. Total 769 (was 737 at v0.11.0).
+
+### Changed
+
+- **`SandboxContext`** gains an optional `signal?: AbortSignal` field plus a runtime-internal `_withSignal(signal)` factory that produces a sibling context carrying the per-call signal. The frozen-context invariant is preserved.
+- **`docs/chat.md`** gets a new "Cancelling a tool call (v0.10.1+)" section walking through the Ctrl-C semantics, the 2-second escalation window, what the agent sees when a tool is cancelled, and the MCP 5-second grace pattern.
+- **`docs/observability.md`** documents the new `tool_cancelled` event and the schema bump.
+- **`docs/tools.md`** documents the `ctx.signal` contract for custom-tool authors.
+
+### Design notes (Phase 0 deviations approved)
+
+- **Hardcoded 2-second escalation window.** Per Q1 lean. Configurability would be bloat at this scope; if a user requests it later, ship it then.
+- **Empty `partial_output` for tools that buffer until completion.** Per Q2 lean. Streaming tools (like `shell_exec` line by line) report the bytes that arrived before the abort; tools that buffer (like `apply_patch`) report a structured rollback note in `partial_output`.
+- **`Session.cancelCurrentToolCall()` awaits the executor's actual exit** rather than fire-and-forget. Per Q4 lean. Async semantics let callers know cancellation completed before they take next action.
+- **Text-only hero above the fold.** Per Q6 lean. Image work is separate. WarBit imagery stays in the README but moves below the hero.
+- **MCP servers that ignore abort get a 5-second grace, then synthesized cancellation.** Per Q7 lean. The orphaned MCP call may continue; that is documented.
+
+### Constraints honored
+
+- Zero new runtime dependencies. Cancellation is `AbortController` / `AbortSignal` from Node stdlib.
+- TypeScript strict mode green.
+- Em-dash gate green. Sanity-regex gate green (including the v0.11.0+ `personal_token` denylist).
+- Backwards compatible. `RunOptions.signal`, `RunOptions.onSession`, `Session`, and `ctx.signal` are all optional; existing callers see no behavior change.
+- No regression at the public surface. Trace event union grew by one variant; old readers ignore unknown types.
+
 ## 0.11.0
 
 `cli-bridge` becomes a thin wrapper over **[@pythonluvr/squire](https://github.com/PythonLuvr/squire)**, a new standalone npm package extracted from this codebase. Public behavior is unchanged: `openwar run brief.md` produces identical traces, identical phase events, identical tool-call shapes before and after the split. The architectural change is for discoverability. Squire ships its own README, its own front door, and lets developers searching "run Claude Code from Node.js" or "orchestrate multiple CLI agents" land on a focused tool with a clean API instead of a buried module path inside OpenWar.

@@ -137,6 +137,40 @@ You don't need any of these. Just describe what you want. The commands are an es
 
 ---
 
+## Cancelling a tool call (v0.10.1+)
+
+If a tool call is taking too long (a slow shell command, an in-flight HTTP fetch, an unresponsive MCP call), Ctrl-C cancels just that call instead of killing the whole session.
+
+```
+> read the rate-limiter and find races
+Reading src/ratelimiter/...
+→ shell_exec(go test ./ratelimiter -race -count=100)
+^C
+Cancelling tool call... (press Ctrl-C again within 2s to exit)
+  ↳ cancelled (2841ms)
+
+The race test was aborted. I have the first 300 lines of output if you
+want a partial read, or I can switch to a faster check. Which?
+```
+
+The behavior is:
+
+- **First Ctrl-C with an in-flight tool call** fires the cancellation. The runtime aborts the tool (SIGTERM-then-SIGKILL for `shell_exec`, `fetch` abort for `http_fetch`, in-memory rollback for `apply_patch`). The model receives a structured tool-result with `status: "cancelled"`, the partial output if any, and a one-sentence cancellation note. The next turn proceeds normally; the model decides whether to retry, switch approach, or report back.
+- **Second Ctrl-C within 2 seconds** escalates to a normal exit. The chat log is saved automatically (same path as `/quit`).
+- **Ctrl-C with no in-flight tool call** falls through to a normal exit (v0.10.0 behavior).
+
+A `tool_cancelled` event is written to `~/.openwar/sessions/<brief_id>.trace.ndjson` with the call id, tool name, cancellation source (`operator_signal` from Ctrl-C; `timeout` and `runtime_shutdown` are reserved for future use), and the partial output the tool produced before the abort fired. The companion `tool_result` event is NOT emitted for a cancelled call; `tool_cancelled` carries everything an inspect formatter needs.
+
+The 2-second escalation window is hardcoded. Configurability would be bloat at this scope; file an issue if it bites you.
+
+Cancellation does NOT route through Phase 3. The destructive-action gate's job is to gate the START of a destructive call; cancelling one already in flight is an operator-initiated allowed action at any time.
+
+For MCP-forwarded tools, OpenWar fires the abort signal and waits 5 seconds for the downstream MCP server to honor it. If the server does not respond in that window, OpenWar synthesizes a local `tool_cancelled` event and unblocks the phase machine. The downstream call may continue running; that's the server's bug, not the runtime's.
+
+Programmatic callers using OpenWar as a library can drive cancellation via `RunOptions.signal` (cancels at the next tool-call boundary) or by capturing the live `Session` handle via `RunOptions.onSession` and calling `session.cancelCurrentToolCall()`. See [library.md](./library.md) for the full surface.
+
+---
+
 ## Saved briefs
 
 `/save` writes a v0.x-compatible YAML-frontmatter markdown file to `~/.openwar/briefs/<name>.md`. The file includes:

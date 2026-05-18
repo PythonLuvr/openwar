@@ -37,9 +37,10 @@ Event types in v0.8.0:
 | `chat_session_compiled` | v0.10.0+. Once per chat-originated run, stamped into the brief's trace at session start so `openwar inspect` can show "this run came from chat session X". Includes `chat_id` and `brief_id`. |
 | `chat_session_resumed` | v0.10.0+. Defined for forward-compat. Primarily lives in the chat-store NDJSON (`~/.openwar/chats/<chat_id>.ndjson`); included in the trace union so library consumers can ingest both streams against one type. |
 | `chat_brief_saved` | v0.10.0+. Defined for forward-compat. Primarily lives in the chat-store NDJSON; emitted when a chat session writes a saved brief to `~/.openwar/briefs/<name>.md`. |
+| `tool_cancelled` | v0.10.1+. An in-flight tool call was aborted (chat REPL Ctrl-C, programmatic `Session.cancelCurrentToolCall()`, or `RunOptions.signal`). Carries `call_id`, `tool_name`, `cancellation_source` (`operator_signal` / `timeout` / `runtime_shutdown`), and `partial_output` (whatever bytes the tool produced before the abort fired; empty for tools that buffer until completion). The companion `tool_result` event is NOT emitted for a cancelled call. |
 | `error` | Catchall for runtime exceptions surfaced at known seams. |
 
-The schema is versioned. v0.8.0 ships `version: 1`. v0.8.x can add fields; consumers should treat unknown event types as informational and ignore unknown optional fields.
+The schema is versioned. v0.8.0 shipped `version: 1`. v0.10.1 bumped to `version: 2` for the additive `tool_cancelled` event. v0.8.x and v0.10.x can add fields; consumers should treat unknown event types as informational and ignore unknown optional fields.
 
 ---
 
