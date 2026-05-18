@@ -17,10 +17,11 @@
 // --exec-adapter cli-bridge --exec-binary claude for free local execution
 // on a user's existing Claude Code subscription.
 
-import { createInterface } from "node:readline/promises";
+import { createInterface, Interface as ReadlineInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
+import type { Readable, Writable } from "node:stream";
 import { makeAdapter, type AdapterId } from "../adapters/index.js";
 import type { AdapterConfig, AgentAdapter, Brief, RunOptions } from "../types.js";
 import { runtimeVersion } from "../version.js";
@@ -52,6 +53,16 @@ export interface ChatCommandOptions {
   execBinary?: string;
   project?: string;
   noSave?: boolean;
+  // v0.10.0: programmatic I/O override. Production passes nothing (defaults
+  // to process.stdin / process.stdout). Tests inject Readable / Writable
+  // streams so the chat loop is exercisable without a real terminal. Also
+  // used by the Windows readline smoke tests.
+  stdin?: Readable;
+  stdout?: Writable;
+  // When true, the chat loop returns after the first /quit-induced ended
+  // outcome instead of looping until stream closure. Defaults true; tests
+  // that want to drive multiple iterations explicitly set false.
+  exitOnQuit?: boolean;
 }
 
 export interface ResolvedAdapterChoice {
@@ -181,12 +192,39 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
     projectSlug,
   });
 
-  // Wire readline to the ChatIO contract.
-  const rl = createInterface({ input: process.stdin, output: process.stdout, historySize: 200 });
+  // Wire readline to the ChatIO contract. stdin / stdout are overridable so
+  // tests can drive the loop without a real terminal.
+  const stdinStream = opts.stdin ?? process.stdin;
+  const stdoutStream = opts.stdout ?? process.stdout;
+  const rl: ReadlineInterface = createInterface({
+    input: stdinStream,
+    output: stdoutStream,
+    historySize: 200,
+    // terminal:false disables raw mode + ANSI escape interpretation when
+    // we're driving from a pipe / non-TTY (Windows specifically gets weird
+    // with the default heuristic). Production stdin IS a TTY so we let it
+    // auto-detect; tests pass a Readable and inherit terminal:false.
+    ...(opts.stdin ? { terminal: false } : {}),
+  });
   const io: ChatIO = {
-    write: (s) => process.stdout.write(s),
+    write: (s) => { stdoutStream.write(s); },
     prompt: (q) => rl.question(q),
   };
+
+  // v0.10.0: Ctrl-C handling. Without this, readline forwards SIGINT to the
+  // process and Node's default is to exit immediately, which means the chat
+  // log gets the user_quit reason silently and the operator sees no
+  // confirmation that the session was saved. Install a handler that ends
+  // the readline cleanly so the main loop's exit path runs (with banner +
+  // saved-session message). Critical on Windows where Ctrl-C interrupts
+  // mid-line more aggressively than on POSIX.
+  const sigintHandler = (): void => {
+    // rl.close() throws if already closed; guard for double-Ctrl-C.
+    try { rl.close(); } catch { /* already closed */ }
+  };
+  // Only install for the real process.stdin path; tests with injected stdin
+  // never receive SIGINT in this process.
+  if (!opts.stdin) process.on("SIGINT", sigintHandler);
 
   // Banner.
   io.write(`openwar v${runtimeVersion()} chat session ${opts.resume ? `(resumed: ${chatId})` : `started (id: ${chatId})`}\n`);
@@ -234,18 +272,54 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
   if (resumeEvents) sessionOpts.resumeEvents = resumeEvents;
   const session = new ChatSession(sessionOpts);
 
-  // Main loop.
+  // Main loop. Catches readline closure (Ctrl-C, EOF on piped stdin, /quit
+  // -> rl.close path) and exits cleanly. exitOnQuit defaults true; the only
+  // caller that sets it false is the integration test that wants the loop
+  // to terminate immediately after the input stream ends.
+  const exitOnQuit = opts.exitOnQuit ?? true;
+  // Track close state so we can short-circuit the question() race below.
+  let rlClosed = false;
+  rl.once("close", () => { rlClosed = true; });
+  // Run-once flag so an EOF-induced /quit doesn't loop the chat-end banner.
+  let endedByEof = false;
   try {
     while (true) {
-      const line = await rl.question("> ");
+      if (rlClosed) {
+        if (!endedByEof) {
+          endedByEof = true;
+          await session.handleUserInput("/quit");
+        }
+        break;
+      }
+      // Race rl.question against the close event. node:readline/promises'
+      // question() does NOT reject on close (it just hangs), so we wrap it
+      // in a Promise.race so EOF / SIGINT unblocks the loop reliably on
+      // both POSIX and Windows.
+      const closeSignal = new Promise<typeof EOF_SENTINEL>((resolve) => {
+        rl.once("close", () => resolve(EOF_SENTINEL));
+      });
+      const line = await Promise.race([rl.question("> "), closeSignal]);
+      if (line === EOF_SENTINEL) {
+        if (!endedByEof) {
+          endedByEof = true;
+          await session.handleUserInput("/quit");
+        }
+        break;
+      }
       const outcome = await session.handleUserInput(line);
-      if (outcome === "ended") break;
+      if (outcome === "ended" && exitOnQuit) break;
     }
   } finally {
-    rl.close();
+    if (!opts.stdin) process.off("SIGINT", sigintHandler);
+    try { rl.close(); } catch { /* already closed */ }
   }
   return 0;
 }
+
+// Sentinel used by the main-loop Promise.race so we can distinguish EOF
+// from a normal user line without coupling to a magic string the user
+// might actually type.
+const EOF_SENTINEL = Symbol("openwar.chat.eof") as unknown as string;
 
 // Infer project slug from working directory basename. Operator can override
 // with --project. Conservative: sanitizes to alphanumeric + dash so the

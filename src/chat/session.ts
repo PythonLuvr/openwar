@@ -23,6 +23,8 @@ import {
   newChatId,
   type ChatEvent,
 } from "../state/chat-store.js";
+import { Tracer } from "../state/trace.js";
+import { runtimeVersion } from "../version.js";
 import {
   DRIFT_THRESHOLD,
   HARD_FAIL_THRESHOLD,
@@ -95,12 +97,54 @@ export class ChatSession {
   private abortRequested = false;
   // chat id (for trace correlation and save-brief provenance).
   readonly chatId: string;
+  // v0.10.0: brief_id of the most recently executed brief in this session.
+  // When set, the session mirrors chat_brief_saved trace events into that
+  // brief's trace file so `openwar inspect <brief_id> --trace` shows the
+  // save event alongside the rest of the run.
+  private lastExecutedBriefId: string | null = null;
 
   constructor(opts: ChatSessionOptions) {
     this.opts = opts;
     this.chatId = opts.store.chatId;
     this.buffer = { turns: [] };
     if (opts.resumeEvents) this.restoreFromEvents(opts.resumeEvents);
+    // v0.10.0: if we were resumed, recover the last executed brief id and
+    // emit chat_session_resumed into both the chat-store AND that brief's
+    // trace (so inspect surfaces the resume marker against the recent run).
+    if (opts.resumeEvents) {
+      for (const ev of opts.resumeEvents) {
+        if (ev.type === "execution_started") this.lastExecutedBriefId = ev.brief_id;
+      }
+      const at = new Date().toISOString();
+      // Chat-store: emit a session_started-style resume marker so the
+      // audit trail shows when resumes happened. We use the chat-store
+      // ended-reason approach: a synthetic event type isn't in the union,
+      // so we emit a user_turn-shaped synthetic. Simpler: just emit the
+      // resume into the trace, and rely on the chat-store's session
+      // started timestamp + the resume cli emitting from outside.
+      this.mirrorToLastBriefTrace({ type: "chat_session_resumed", at, chat_id: this.chatId });
+    }
+  }
+
+  // Append a chat-* trace event to the most recently executed brief's trace
+  // file, when one exists. The runtime's brief tracer is opaque to us; we
+  // construct a thin Tracer pointed at the same path and emit there.
+  // Multiple appendFileSync writers to the same trace file are safe (line-
+  // atomic on POSIX, OK on Windows for our line sizes; same property the
+  // v0.8 mcp-serve subprocess relies on).
+  private mirrorToLastBriefTrace(event: import("../state/trace.js").TraceEvent): void {
+    if (!this.lastExecutedBriefId) return;
+    try {
+      const tracer = new Tracer({
+        briefId: this.lastExecutedBriefId,
+        enabled: true,
+        openwarVersion: runtimeVersion(),
+      });
+      tracer.emit(event);
+    } catch {
+      // Best effort. The chat-store record is the canonical audit trail;
+      // missing brief trace mirror is not load-bearing.
+    }
   }
 
   private restoreFromEvents(events: readonly ChatEvent[]): void {
@@ -201,7 +245,12 @@ export class ChatSession {
         buffer: this.buffer,
         chatId: this.chatId,
       });
-      this.opts.store.append({ type: "brief_saved", at: new Date().toISOString(), path: result.path });
+      const at = new Date().toISOString();
+      this.opts.store.append({ type: "brief_saved", at, path: result.path });
+      // v0.10.0: mirror chat_brief_saved into the most recently executed
+      // brief's trace so `openwar inspect <brief_id> --trace` shows the
+      // save action against the run that motivated it.
+      this.mirrorToLastBriefTrace({ type: "chat_brief_saved", at, chat_id: this.chatId, path: result.path });
       this.opts.io.write(`saved to ${result.path}\nReplay: openwar run ${result.path}\n`);
     } catch (err) {
       if (err instanceof SaveBriefError) {
@@ -240,15 +289,37 @@ export class ChatSession {
 
       if (!result.parsed.ok) {
         // Drift. Record the agent turn (so the user can /history audit it),
-        // bump drift counter, ask the deterministic fallback if at threshold,
-        // and let the loop retry.
+        // bump drift counter, escalate per threshold:
+        //   - HARD_FAIL_THRESHOLD: close the session, write hard-fail event.
+        //   - DRIFT_THRESHOLD (exactly): show the deterministic fallback and
+        //     wait for user input.
+        //   - Below DRIFT_THRESHOLD: silently retry with an escalating
+        //     reminder in the next agent call.
+        //   - Above DRIFT_THRESHOLD but below HARD_FAIL_THRESHOLD: another
+        //     wait (we already showed the fallback; user is rephrasing and
+        //     the agent still failed). Each subsequent waiting cycle moves
+        //     us one step closer to HARD_FAIL_THRESHOLD.
         this.opts.store.append({ type: "agent_turn", at, content: result.text, intent: "drift" });
         this.driftCount++;
-        if (this.driftCount >= DRIFT_THRESHOLD) {
+        if (this.driftCount >= HARD_FAIL_THRESHOLD) {
+          // The top-of-loop check would also catch this on the next
+          // iteration, but emitting here is more direct and avoids a
+          // wasted iteration.
+          this.opts.io.write(HARD_FAIL_MESSAGE + "\n");
+          this.opts.store.append({ type: "chat_session_ended", at: new Date().toISOString(), reason: "hard_fail_intent_drift" });
+          return;
+        }
+        if (this.driftCount === DRIFT_THRESHOLD) {
           this.opts.io.write(DRIFT_FALLBACK_QUESTION + "\n");
           return; // Wait for user to retry.
         }
-        // Below threshold: silently retry with an escalating reminder.
+        if (this.driftCount > DRIFT_THRESHOLD) {
+          // Already showed the fallback once; just wait silently for the
+          // next user input. The next failed agent turn brings us closer
+          // to HARD_FAIL_THRESHOLD.
+          return;
+        }
+        // Below threshold: retry with an escalating reminder.
         continue;
       }
 
@@ -335,10 +406,12 @@ export class ChatSession {
     if (!this.pendingBrief) return;
     this.executing = true;
     this.abortRequested = false;
+    const briefId = this.pendingBrief.frontmatter.brief_id ?? "(none)";
+    this.lastExecutedBriefId = briefId;
     this.opts.store.append({
       type: "execution_started",
       at: new Date().toISOString(),
-      brief_id: this.pendingBrief.frontmatter.brief_id ?? "(none)",
+      brief_id: briefId,
     });
     let outcome: ExecuteOutcome;
     try {

@@ -2,7 +2,7 @@
 
 ## 0.10.0
 
-`openwar chat`: the front door. The runtime is the same; the entry point is new. A non-developer describes what they want in plain English, OpenWar asks clarifying questions if needed, proposes a plan, gets approval, executes through the existing phase machine, and surfaces destructive prompts as plain English questions instead of y/n flags. The audit trail underneath (trace.ndjson, phase events, detector log, learned profile) all still exists. Power users keep writing briefs by hand. Everyone else just talks.
+`openwar chat`: the front door. (Patch applied post-initial-commit to close three corners caught during honest self-review: Windows readline handling, adversarial agent-drift coverage at the session level, and full emission of all three chat trace events. See "Post-commit fixes" section below.) The runtime is the same; the entry point is new. A non-developer describes what they want in plain English, OpenWar asks clarifying questions if needed, proposes a plan, gets approval, executes through the existing phase machine, and surfaces destructive prompts as plain English questions instead of y/n flags. The audit trail underneath (trace.ndjson, phase events, detector log, learned profile) all still exists. Power users keep writing briefs by hand. Everyone else just talks.
 
 Originally scoped as one ship. Split during Phase 0 review into v0.10.0 (functional chat layer) and v0.10.1 (positioning + UX refinements based on real adoption signal) on the same pattern as the v0.7 reorder and v0.9 split. Three for three on this pattern.
 
@@ -47,7 +47,17 @@ Originally scoped as one ship. Split during Phase 0 review into v0.10.0 (functio
 
 - v0.10.0 is fully backward compatible with v0.9.x and all earlier versions. Existing briefs run identically. Existing scripts wrapping `openwar run` are unaffected. The new `openwar chat` subcommand is additive.
 - The chat store at `~/.openwar/chats/<chat_id>.ndjson` is a separate persistence stream from `~/.openwar/sessions/<brief_id>.trace.ndjson`. Library consumers can ingest both via `readChat()` and `readTrace()` exports.
-- A chat-originated brief's trace stamps `chat_session_compiled` with the originating chat id; `openwar inspect <brief_id> --trace` shows the correlation.
+- A chat-originated brief's trace stamps `chat_session_compiled` with the originating chat id; `openwar inspect <brief_id> --trace` shows the correlation. `chat_brief_saved` and `chat_session_resumed` also mirror into the most recent brief's trace when one is active, so all three chat-correlation events surface via `--trace`.
+
+### Post-commit fixes
+
+After the initial commit, three corners were caught during honest self-review and patched before publisher push:
+
+1. **Windows readline handling.** The brief budgeted explicit work for Windows-specific readline behavior. Initial commit shipped without it. Patched: SIGINT handler that closes readline cleanly so Ctrl-C routes through the `/quit` path with a saved-session banner; EOF on piped stdin treated identically to `/quit`; CRLF line endings parsed correctly; `runChatCommand` now accepts optional `stdin` / `stdout` overrides for embedders and programmatic test harnesses. Five new tests in `tests/cli/chat-readline.test.ts` pin the cross-platform behavior (EOF routing, /quit on pipes, /help on pipes, CRLF input, 250-entry history volume).
+2. **Adversarial agent-drift coverage at the session level.** Initial commit had parser-level adversarial fixtures but no session-level coverage. Patched: ten new tests in `tests/chat/agent-drift.test.ts` driving the session manager through every drift mode (no_tool_call, multiple_tool_calls, unknown_tool, invalid_args, fabricated_approval, drift-after-execution) plus full DRIFT_THRESHOLD -> HARD_FAIL_THRESHOLD escalation paths. Caught and fixed a real bug in the session manager: once `driftCount` crossed DRIFT_THRESHOLD, subsequent failed turns repeatedly fired the fallback message without ever reaching HARD_FAIL_THRESHOLD. Now escalates correctly through the three thresholds (silent retry < DRIFT_THRESHOLD < deterministic fallback < HARD_FAIL_THRESHOLD < hard-fail close).
+3. **Full chat trace event emission.** Initial commit emitted only `chat_session_compiled`. `chat_session_resumed` and `chat_brief_saved` were defined in the trace union but never fired by any runtime code path. Patched: the session manager now mirrors both into the most recently executed brief's trace file (multiple `appendFileSync` writers per file is safe by the same line-atomic property the v0.8 mcp-serve subprocess relies on). Three new tests in `tests/chat/trace-mirror.test.ts` pin the mirror behavior; the integration test continues to verify `chat_session_compiled` correlation.
+
+737 tests total (was 719 at initial commit; +18 from the three fixes). All 17 coverage gates pass; `src/chat/` at 98.4%, `src/cli/chat.ts` at 94.2%, `src/state/chat-store.ts` at 96.4%.
 
 ## 0.9.1
 

@@ -189,6 +189,16 @@ This contract eliminates the free-text-classification drift that would otherwise
 
 ---
 
+## Windows readline notes
+
+`openwar chat` runs on the Node `readline/promises` interface. A few cross-platform notes:
+
+- **Ctrl-C** installs a SIGINT handler that closes readline cleanly and routes through the `/quit` path so the chat-store gets a proper `chat_session_ended` event. Without this, Node would forward SIGINT to the process and exit immediately with no "session saved" confirmation.
+- **EOF on piped stdin** (Ctrl-D on POSIX, Ctrl-Z then Enter on Windows) is treated identically to `/quit`. The session ends cleanly.
+- **CRLF line endings** from a Windows-native pipe are parsed correctly. The readline interface strips `\r` from each line before handing it to the chat loop.
+- **History** is in-memory only (200-entry buffer). v0.10.0 does not persist readline history across sessions; the chat-store NDJSON is the durable record.
+- **Programmatic stdin** (used by tests and integrators embedding `openwar chat` in another tool) sets `terminal: false`, disabling raw mode and ANSI escape interpretation. The `runChatCommand` function accepts optional `stdin` and `stdout` overrides on the options object so embedders can drive the loop from custom streams.
+
 ## What's not in v0.10.0 (deferred to v0.10.1)
 
 - **README hero rewrite reframing OpenWar as "the agent runtime non-developers can actually use".** Positioning change waits for non-dev adoption signal from v0.10.0 use. v0.10.0 ships a "New in v0.10" section that opens the chat path; the existing hero stays.
