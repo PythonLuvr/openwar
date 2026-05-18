@@ -5,6 +5,10 @@
 //   - POSIX user paths under /home/<name>/ or /Users/<name>/
 //   - IPv4 addresses (very broad; allowlist 127.0.0.1 only)
 //   - Email addresses
+//   - Authoring-environment identifiers that have no business appearing in a
+//     generic framework (private workspace names, client slugs, personal
+//     handles). Public third-party tool names are intentionally NOT in this
+//     list, because destructive-action detectors legitimately reference them.
 //
 // Excludes node_modules, dist, .git, coverage, and this script itself.
 
@@ -30,6 +34,11 @@ const PATTERNS = [
     name: "email",
     regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
     allow: ["noreply@anthropic.com", "noreply@github.com"],
+  },
+  {
+    name: "personal_token",
+    regex: /\b(?:mscmu|viralventures[a-z]*|ejredd[a-z0-9]*|ej[-_]brain[a-z0-9-]*|EJ-Brain[a-z0-9-]*|fanward|nexford|wesam|semaclaw|sema-bridge)\b/gi,
+    allow: [],
   },
 ];
 
