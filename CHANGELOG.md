@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## 0.11.2
+
+Patch release. Restores TypeScript build compatibility with the just-shipped Squire v1.1.0. Squire v1.1.0 added four new `SquireEvent` variants (`tool_call`, `tool_result`, `thinking_delta`, `usage`) for its new vendor-aware adapters; OpenWar's `cli-bridge.ts` does exhaustive narrowing on `SquireEvent.type` via a `never` assignment, so the new variants caused a compile-time error for anyone building OpenWar from source after `npm install` resolved `^1.0.0` to `1.1.0`. End users running the precompiled `dist/` were unaffected; contributors and fresh CI clones were not.
+
+### Fixed
+
+- **`src/adapters/cli-bridge.ts`** gains explicit no-op case arms for the four new Squire v1.1.0 event variants. The exhaustive `never` check is preserved so future additive Squire releases will surface the same way (compile-time call to add an arm). OpenWar does not yet translate the new structured events into its own `StreamEvent` surface; adoption of the richer tool-call surface is a separate decision tracked for v0.12 or later.
+
+### Changed
+
+- **`@pythonluvr/squire` dependency range** bumped from `^1.0.0` to `^1.1.0` so the lockfile pins against the version that introduced the new variants. Operators on v0.11.1 picking up v0.11.2 via `npm update` will resolve Squire to 1.1.0 automatically.
+
 ## 0.11.1
 
 Two honest gaps closed without expanding scope. The hero rewrite makes the README's first screen match the v0.10.0 promise (the chat REPL is the front door, not a buried section). The cancellation primitive makes the runtime survive its most likely real-world annoyance, a slow tool call, without losing the trace or killing the session. Also adopts the published `@pythonluvr/squire@1.0.0` package (previously vendored via a local workspace link), so OpenWar is now a real-world consumer of Squire on npm.

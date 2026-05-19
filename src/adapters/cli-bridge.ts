@@ -221,6 +221,16 @@ function translateEvent(event: SquireEvent, binary: string): StreamEvent | null 
     case "stderr":
     case "message_start":
       return null;
+    case "tool_call":
+    case "tool_result":
+    case "thinking_delta":
+    case "usage":
+      // Squire v1.1.0 added structured per-CLI vendor events. OpenWar's
+      // StreamEvent surface does not yet carry these; they are recognized
+      // here so the exhaustive narrowing stays compile-safe, and any
+      // future StreamEvent surface for structured tool events can plug in
+      // without touching the default arm. Adoption is a separate decision.
+      return null;
     default: {
       const _exhaustive: never = event;
       void _exhaustive;
