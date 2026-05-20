@@ -156,6 +156,35 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
           at: new Date().toISOString(),
         });
         if (!decision.allowed) {
+          // v0.12.0: PermissionBridge integration. Before halting into
+          // Phase 3, check the grant ledger for a match. A grant whose
+          // category overlaps the required missing categories satisfies
+          // the auth gate; consume the grant (this_call grants flip
+          // consumed) and emit `permission_grant_consumed`. No grant
+          // means we fall through to the existing Phase 3 halt path.
+          const ledger = opts.sandbox?.grantLedger;
+          if (ledger) {
+            const grant = ledger.findMatchingGrant(decision.missing_categories);
+            if (grant) {
+              ledger.consumeGrant(grant.grant_id);
+              tracer.emit({
+                type: "permission_grant_consumed",
+                grant_id: grant.grant_id,
+                consuming_tool_call_id: call.id,
+                at: new Date().toISOString(),
+              });
+              tracer.emit({
+                type: "auth_check_fired",
+                layer: "openwar",
+                tool: call.name,
+                decision: "allow",
+                reason: `permission grant ${grant.grant_id} (scope=${grant.scope}, category=${grant.category ?? "none"}) honored`,
+                at: new Date().toISOString(),
+              });
+              // Skip the halt; the call is authorized for this dispatch.
+              continue;
+            }
+          }
           return {
             history,
             outcome: "destructive_denied",
