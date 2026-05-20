@@ -38,9 +38,16 @@ Event types in v0.8.0:
 | `chat_session_resumed` | v0.10.0+. Defined for forward-compat. Primarily lives in the chat-store NDJSON (`~/.openwar/chats/<chat_id>.ndjson`); included in the trace union so library consumers can ingest both streams against one type. |
 | `chat_brief_saved` | v0.10.0+. Defined for forward-compat. Primarily lives in the chat-store NDJSON; emitted when a chat session writes a saved brief to `~/.openwar/briefs/<name>.md`. |
 | `tool_cancelled` | v0.11.1+. An in-flight tool call was aborted (chat REPL Ctrl-C, programmatic `Session.cancelCurrentToolCall()`, or `RunOptions.signal`). Carries `call_id`, `tool_name`, `cancellation_source` (`operator_signal` / `timeout` / `runtime_shutdown`), and `partial_output` (whatever bytes the tool produced before the abort fired; empty for tools that buffer until completion). The companion `tool_result` event is NOT emitted for a cancelled call. |
+| `permission_requested` | v0.12.0+. Agent called `request_permission`. Carries `grant_id`, `action`, `category`, `scope_requested`, `reasoning`, `fallback`. Logged before the operator answers. |
+| `permission_granted` | v0.12.0+. Operator approved (possibly at a different scope than requested). Carries `grant_id`, `scope_granted`, `operator_note`. |
+| `permission_denied` | v0.12.0+. Operator denied, or no operator available (headless non-TTY). Carries `grant_id`, `operator_note`. |
+| `permission_grant_consumed` | v0.12.0+. Phase 3 found a matching grant for an unauthorized tool call. Carries `grant_id`, `consuming_tool_call_id`. The dispatcher proceeds without the operator prompt. |
+| `permission_revoked` | v0.12.0+. Operator revoked a grant via `/revoke` or `Session.revokeGrant()`. Carries `grant_id`, `revoked_at`. Persistent grants get the revoke row appended to disk. |
 | `error` | Catchall for runtime exceptions surfaced at known seams. |
 
-The schema is versioned. v0.8.0 shipped `version: 1`. v0.11.1 bumped to `version: 2` for the additive `tool_cancelled` event. v0.8.x and v0.10.x can add fields; consumers should treat unknown event types as informational and ignore unknown optional fields.
+The schema is versioned. v0.8.0 shipped `version: 1`. v0.11.1 bumped to `version: 2` for the additive `tool_cancelled` event. v0.12.0 bumped to `version: 3` for the five additive `permission_*` events. Each bump is forward-compatible; consumers should treat unknown event types as informational and ignore unknown optional fields.
+
+`openwar inspect <brief_id> --permissions` renders a per-grant audit row across the permission events: grant id, status (requested / granted / denied / consumed / revoked), scope, category, action, and timestamp. See [`docs/permissions.md`](./permissions.md) for the full PermissionBridge surface.
 
 ---
 

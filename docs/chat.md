@@ -130,6 +130,8 @@ If you ever see a category from the second list auto-granted in your saved brief
 /history            print the conversation buffer so far
 /resume <chat_id>   re-run with --resume <id>
 /abort              polite abort: ends at next phase boundary (v0.10.0)
+/grants             list active permission grants from the current run (v0.12.0)
+/revoke <id>        revoke a permission grant; the agent gets re-prompted (v0.12.0)
 /quit               exit; chat log is saved automatically
 ```
 
@@ -168,6 +170,33 @@ Cancellation does NOT route through Phase 3. The destructive-action gate's job i
 For MCP-forwarded tools, OpenWar fires the abort signal and waits 5 seconds for the downstream MCP server to honor it. If the server does not respond in that window, OpenWar synthesizes a local `tool_cancelled` event and unblocks the phase machine. The downstream call may continue running; that's the server's bug, not the runtime's.
 
 Programmatic callers using OpenWar as a library can drive cancellation via `RunOptions.signal` (cancels at the next tool-call boundary) or by capturing the live `Session` handle via `RunOptions.onSession` and calling `session.cancelCurrentToolCall()`. See [library.md](./library.md) for the full surface.
+
+---
+
+## Permission requests (v0.12.0+)
+
+When a bridged CLI (or any tool-calling agent) calls `request_permission` before a destructive action, the chat REPL prints a multi-line prompt instead of the usual `[y/n]`:
+
+```
+Permission request from agent:
+  ACTION    Delete the file src/legacy.ts
+  REASON    File is unreferenced; cleaning up before the refactor.
+  FALLBACK  Skip the cleanup; refactor proceeds with the file present.
+  CATEGORY  filesystem_write
+  REQUESTED SCOPE  this_call
+
+Approve at what scope?
+  y         grant at requested scope (this_call)
+  s         grant for the rest of this session
+  p         grant persistently (saved to project memory)
+  n         deny
+  n: <msg>  deny with a note for the agent
+>
+```
+
+`s` and `p` are also approvals; they escalate the scope past what the agent requested. `n: <msg>` denies with a note that goes back to the agent in the tool result. Approval registers a grant in the per-session ledger; Phase 3 honors matching grants on subsequent destructive calls (no second prompt).
+
+`/grants` lists active grants. `/revoke <grant_id>` revokes one. Full reference: [`docs/permissions.md`](./permissions.md).
 
 ---
 

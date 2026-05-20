@@ -1,6 +1,41 @@
 # Changelog
 
-## [Unreleased]
+## 0.12.0
+
+PermissionBridge: the destructive-action gate gets articulate. Bridged CLIs (and any tool-calling agent) can now ask for permission BEFORE acting with a structured payload (action, scope, reasoning, fallback). The operator answers at one of three scopes. The discipline layer does not relax; the conversation gets better. Phase 3 still fires whenever no grant matches.
+
+### Added
+
+- **`request_permission` native tool** (also exposed via MCP-server-mode as `openwar:request_permission`). Bridged CLIs call it before attempting a potentially-destructive action with `{ action, scope, reasoning, fallback?, category? }` and receive a structured grant or denial. The tool itself is default-allowed (`authorization_categories: []`); requesting permission is never destructive.
+- **`GrantLedger` per session** at `src/runtime/grants.ts`. Holds in-memory grants with `addGrant / consumeGrant / revokeGrant / findMatchingGrant / listActive`. Persistent grants serialize to `~/.openwar/projects/<slug>/permission_grants.jsonl` (append-only, same shape contract as v0.6 memory and v0.8 trace).
+- **Phase 3 grant consumption.** Before halting on an unauthorized tool call, the runtime queries `ctx.grantLedger.findMatchingGrant(missing_categories)`. A matching grant emits `permission_grant_consumed`, synthesizes an `auth_check_fired` allow event, and lets the dispatcher proceed. No match means the existing Phase 3 halt path runs. PermissionBridge is an upstream hint, not a bypass.
+- **Three grant scopes.** `this_call` covers exactly one upcoming destructive call (consumed on first match). `this_session` lasts until session end. `persistent` survives across sessions via the per-project store; degrades silently to `this_session` when no `project_slug` is set.
+- **Operator prompt format B** (selected from three Phase 0 candidates). Multi-line form with explicit "Approve at what scope?" framing so `y / s / p` are all legibly approvals at different scopes; `n` and `n: <note>` deny. The same prompt renders to stderr in headless TTY mode; non-TTY denies-by-default with `operator_note: "no interactive operator available"`.
+- **Five new trace events.** `permission_requested`, `permission_granted`, `permission_denied`, `permission_grant_consumed`, `permission_revoked`. Every grant has a paper trail.
+- **`TRACE_SCHEMA_VERSION` bumped to 3.** Additive. Old readers ignore unknown event types.
+- **`Session` interface gains `listActiveGrants(): readonly Grant[]` and `revokeGrant(grant_id): boolean`.** Programmatic surface for chat REPL, integrators, and external programs. Both methods are additive; existing `Session` callers see no break.
+- **Chat REPL slash commands** `/grants` (list active grants for the current run) and `/revoke <grant_id>` (revoke a grant; persistent grants also get a revoke row appended to disk).
+- **`openwar inspect <brief_id> --permissions`** renders a per-grant audit row over the permission events: grant id, status (requested / granted / denied / consumed / revoked), scope, category, action, timestamp. Available as the `formatPermissions` export from the library entry point.
+- **`SandboxContext` gains optional `io` / `grantLedger` / `tracer` fields** (mirrors the v0.11.1 `signal?` pattern). The runner populates them so the `request_permission` executor can prompt the operator, register grants, and emit trace events without special-case dispatcher routing. Existing tools ignore the new fields.
+- **New `docs/permissions.md`** (the canonical PermissionBridge reference: schema, scope semantics, match rules, Phase 3 integration, trace events, persistence, programmatic surface, worked examples). Updates to `docs/chat.md`, `docs/observability.md`, `docs/tools.md`, and the README docs index.
+- **50 new tests** across `tests/tools/request-permission.test.ts`, `tests/runner/grants.test.ts`, `tests/runner/permission-grant-consumption.test.ts`, `tests/cli/chat-permission-prompt.test.ts`, `tests/state/permission-trace-events.test.ts`, and `tests/cli/inspect-permissions.test.ts`. Total 819 (was 769 at v0.11.2). Above the +25 target.
+
+### Design notes (Phase 0 rulings)
+
+- **Match by category only, no literal-action-string matching.** Phase 3 sees structured tool calls (tool name + args), not free text; matching by `action` string would be fragile. The rule mirrors the existing `authorized_costs` mental model.
+- **Most recent unconsumed `this_call` grant wins over `this_session` / `persistent`** when multiple grants could match. Intent reading: "I just asked; let me do it."
+- **`SandboxContext` extension over dispatcher special-case.** Symmetric with v0.11.1's `signal?`. The `request_permission` executor reads `ctx.io`, `ctx.grantLedger`, `ctx.tracer`. No special-case path in `src/phases/execute.ts`.
+- **Persistent grants live in a separate `permission_grants.jsonl` file**, NOT as a fourth namespace in `MEMORY_CATEGORIES`. Keeps the read/write/list_project_memory tools and their tests untouched.
+- **`permission_revoked` shipped as a fifth trace event.** Cheap, audit-aligned with the rest.
+- **Tests use workspace convention** (`tests/runner/` not `tests/runtime/`; `tests/state/` not `tests/phases/`).
+
+### Constraints honored
+
+- Zero new runtime dependencies. UUIDs from `node:crypto.randomUUID`; JSONL append-only via existing v0.6 patterns.
+- TypeScript strict mode green.
+- Em-dash gate green. Sanity-regex gate green (including the v0.11.0+ `personal_token` denylist).
+- Backwards compatible. `Session` callers that only used `cancelCurrentToolCall()` still typecheck; existing tools ignore the new SandboxContext fields. Bridged CLIs that never call `request_permission` operate exactly as in v0.11.2. Phase 3 with no active grants behaves identically to v0.11.2.
+- No public-surface regression. Trace event union grew by five additive variants; old readers ignore unknown types. Existing `openwar inspect` flags unchanged.
 
 ## 0.11.2
 

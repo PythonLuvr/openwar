@@ -22,6 +22,7 @@ If a tool call requires an unauthorized category, the runtime halts into Phase 3
 | `read_project_memory` | `filesystem_read` | v0.6+. Reaches `~/.openwar/projects/<slug>/<category>.jsonl` directly (not workdir-sandboxed). v0.7.3 added optional `project` + `id` args. |
 | `write_project_memory` | `filesystem_write` | v0.6+. Appends an entry to the project's memory store. Same scoping as `read_project_memory`. |
 | `list_project_memory` | `filesystem_read` | v0.7.3. Summarizes a project's memory store; returns per-category counts and 200-char excerpts. Use it to find ids; follow up with `read_project_memory` for full bodies. |
+| `request_permission` | (none, default-allowed) | v0.12.0+. Ask the operator for permission to perform a potentially-destructive action BEFORE attempting it. Returns a structured grant the runtime honors at Phase 3 dispatch. See [`docs/permissions.md`](./permissions.md) for the full PermissionBridge surface. |
 
 List them with:
 
