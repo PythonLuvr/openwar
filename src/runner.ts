@@ -50,6 +50,7 @@ import { setupCliBridgeMcpForwarding, replayMcpToolLog, CliBridgePermissionSetup
 import { CliBridgeAdapter } from "./adapters/cli-bridge.js";
 import { ToolCallRegistry, sessionFromRegistry, raceWithCancellation } from "./runtime/cancellation.js";
 import { TOOL_CANCELLED_ERROR_CODE, TOOL_CANCELLED_MESSAGE } from "./sandbox/types.js";
+import { GrantLedger } from "./runtime/grants.js";
 
 // v0.11.1: how long to wait for an MCP server to honor an abort before
 // synthesizing a cancelled result locally. Per the brief's Q7 lean.
@@ -393,6 +394,13 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   const httpAllowPath = join(homedir(), ".openwar", "http-allow.json");
   let httpAllowlist;
   try { httpAllowlist = await loadHostAllowlist(httpAllowPath); } catch { httpAllowlist = null; }
+  // v0.12.0: per-session GrantLedger. Seeded with persistent grants from
+  // the per-project store at construction time. `persistent` requests
+  // fall back to `this_session` when project_slug is unset.
+  const grantLedger = new GrantLedger(
+    brief.frontmatter.project ? { project_slug: brief.frontmatter.project } : {},
+  );
+
   const sandbox = SandboxContext._create({
     workdir,
     defaultTimeoutMs: 30_000,
@@ -401,6 +409,9 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     shellEnabled: !opts.disableShell,
     project_slug: brief.frontmatter.project,
     brief_id: session.meta.brief_id,
+    io,
+    grantLedger,
+    tracer: { emit: (ev) => tracer.emit(ev as Parameters<typeof tracer.emit>[0]) },
   });
 
   // v0.11.1: per-session cancellation registry. Every tool dispatch registers
@@ -410,7 +421,24 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   // onSession callback so external callers can drive cancellation without
   // touching the registry directly.
   const cancellationRegistry = new ToolCallRegistry();
-  const liveSession = sessionFromRegistry(cancellationRegistry);
+  // v0.12.0: Session also exposes the grant ledger so chat REPL `/grants`
+  // and `/revoke` slash commands can drive the ledger without reaching
+  // into runner internals.
+  const liveSession = {
+    cancelCurrentToolCall: () => cancellationRegistry.cancel("operator_signal"),
+    listActiveGrants: () => grantLedger.listActive(),
+    revokeGrant: (grant_id: string) => {
+      const ok = grantLedger.revokeGrant(grant_id);
+      if (ok) {
+        tracer.emit({
+          type: "permission_revoked",
+          grant_id,
+          revoked_at: new Date().toISOString(),
+        });
+      }
+      return ok;
+    },
+  };
   opts.onSession?.(liveSession);
   if (opts.signal) {
     const onParentAbort = () => {

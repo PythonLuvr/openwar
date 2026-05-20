@@ -5,6 +5,16 @@
 // as runtime-internal.
 
 import type { HostAllowlist } from "./host-allowlist.js";
+import type { RunnerIO } from "../types.js";
+import type { GrantLedger } from "../runtime/grants.js";
+
+// v0.12.0: minimal tracer surface so native tools that need to emit
+// trace events (currently just request_permission) can do so without
+// importing the Tracer class (avoids src/sandbox <-> src/state import
+// cycles). The runner wires this to the real Tracer.emit.
+export interface SandboxTracerHook {
+  emit(event: unknown): void;
+}
 
 export interface SandboxContextFields {
   // Absolute path. Every filesystem-touching tool resolves paths against this.
@@ -32,6 +42,21 @@ export interface SandboxContextFields {
   // bare contexts (tests that construct a minimal sandbox); tools must treat
   // an undefined signal as "no cancellation possible".
   signal?: AbortSignal;
+  // v0.12.0: optional operator I/O surface. Populated by the runner so the
+  // `request_permission` native tool can prompt the operator. Existing
+  // tools ignore this field; custom tools that need operator interaction
+  // can read it. Absent in bare contexts (tests / headless runs that
+  // construct a minimal sandbox).
+  io?: RunnerIO;
+  // v0.12.0: optional per-session grant ledger. Populated by the runner
+  // so the `request_permission` tool can register new grants and the
+  // Phase 3 dispatcher can consume matching ones. Existing tools ignore.
+  grantLedger?: GrantLedger;
+  // v0.12.0: optional trace-event hook. The request_permission tool uses
+  // this to emit permission_requested / permission_granted /
+  // permission_denied events. Other tools ignore. Absent in minimal
+  // sandboxes; tool falls back to the structured tool-result alone.
+  tracer?: SandboxTracerHook;
 }
 
 export class SandboxContext {
@@ -43,6 +68,9 @@ export class SandboxContext {
   readonly project_slug?: string;
   readonly brief_id?: string;
   readonly signal?: AbortSignal;
+  readonly io?: RunnerIO;
+  readonly grantLedger?: GrantLedger;
+  readonly tracer?: SandboxTracerHook;
 
   private constructor(fields: SandboxContextFields) {
     this.workdir = fields.workdir;
@@ -53,6 +81,9 @@ export class SandboxContext {
     if (fields.project_slug) this.project_slug = fields.project_slug;
     if (fields.brief_id) this.brief_id = fields.brief_id;
     if (fields.signal) this.signal = fields.signal;
+    if (fields.io) this.io = fields.io;
+    if (fields.grantLedger) this.grantLedger = fields.grantLedger;
+    if (fields.tracer) this.tracer = fields.tracer;
     Object.freeze(this);
   }
 
@@ -76,6 +107,9 @@ export class SandboxContext {
       project_slug: this.project_slug,
       brief_id: this.brief_id,
       signal,
+      ...(this.io ? { io: this.io } : {}),
+      ...(this.grantLedger ? { grantLedger: this.grantLedger } : {}),
+      ...(this.tracer ? { tracer: this.tracer } : {}),
     });
   }
 }

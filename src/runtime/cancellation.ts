@@ -102,12 +102,16 @@ export class ToolCallRegistry {
   }
 }
 
-// Build a Session handle over a registry. Caller (the runner) hands this
-// to the optional `RunOptions.onSession` callback so external programs
-// can drive cancellation without touching the registry directly.
+// Build a Session handle over a registry. v0.12.0 added grant-ledger
+// surface to the Session interface; this helper returns no-op
+// implementations so unit tests and minimal callers still typecheck.
+// The runner builds its Session inline with the real ledger so chat REPL
+// and external callers get working /grants and /revoke surfaces.
 export function sessionFromRegistry(registry: ToolCallRegistry): Session {
   return {
     cancelCurrentToolCall: () => registry.cancel("operator_signal"),
+    listActiveGrants: () => [],
+    revokeGrant: () => false,
   };
 }
 

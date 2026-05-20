@@ -72,6 +72,7 @@ export {
   formatDetectors,
   formatTools,
   formatMcp,
+  formatPermissions,
 } from "./cli/inspect.js";
 export { runReplay, type ReplayOptions, type ReplayResult } from "./cli/replay.js";
 

@@ -17,9 +17,11 @@ import { dirname } from "node:path";
 import { traceFile, sessionsDir } from "./paths.js";
 import type { Phase, RoleId, CoordinatorState, SubTaskStatus } from "../types.js";
 
-// v0.11.1 bumps to 2 for the additive `tool_cancelled` event type. The bump
-// is forward-compatible: readers that only know v1 events skip unknown types.
-export const TRACE_SCHEMA_VERSION = 2;
+// v0.11.1 bumps to 2 for the additive `tool_cancelled` event type.
+// v0.12.0 bumps to 3 for the additive `permission_*` event types. Each bump
+// is forward-compatible: readers that only know older event types skip
+// unknown ones.
+export const TRACE_SCHEMA_VERSION = 3;
 
 export type TraceEvent =
   | { type: "trace_version"; version: number; openwar_version: string; brief_id: string; at: string }
@@ -73,6 +75,44 @@ export type TraceEvent =
       cancellation_source: "operator_signal" | "timeout" | "runtime_shutdown";
       partial_output: string;
       at: string;
+    }
+  // v0.12.0: PermissionBridge lifecycle. Emitted by the request_permission
+  // tool (requested / granted / denied), by Phase 3 when an active grant
+  // covers a destructive call (grant_consumed), and by the runtime when an
+  // operator revokes a grant (revoked). See docs/permissions.md.
+  | {
+      type: "permission_requested";
+      grant_id: string;
+      action: string;
+      category: string | null;
+      scope_requested: "this_call" | "this_session" | "persistent";
+      reasoning: string;
+      fallback: string | null;
+      at: string;
+    }
+  | {
+      type: "permission_granted";
+      grant_id: string;
+      scope_granted: "this_call" | "this_session" | "persistent";
+      operator_note: string;
+      at: string;
+    }
+  | {
+      type: "permission_denied";
+      grant_id: string;
+      operator_note: string;
+      at: string;
+    }
+  | {
+      type: "permission_grant_consumed";
+      grant_id: string;
+      consuming_tool_call_id: string;
+      at: string;
+    }
+  | {
+      type: "permission_revoked";
+      grant_id: string;
+      revoked_at: string;
     }
   | { type: "error"; error: string; phase: Phase; at: string };
 

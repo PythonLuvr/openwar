@@ -10,6 +10,7 @@ import { APPLY_PATCH_DEFINITION, applyPatchExecutor } from "./apply_patch.js";
 import { READ_PROJECT_MEMORY_DEFINITION, readProjectMemoryExecutor } from "./read_project_memory.js";
 import { WRITE_PROJECT_MEMORY_DEFINITION, writeProjectMemoryExecutor } from "./write_project_memory.js";
 import { LIST_PROJECT_MEMORY_DEFINITION, listProjectMemoryExecutor } from "./list_project_memory.js";
+import { REQUEST_PERMISSION_DEFINITION, requestPermissionExecutor } from "./request_permission.js";
 
 export interface NativeTool {
   definition: ToolDefinition;
@@ -26,6 +27,7 @@ export const NATIVE_TOOLS: ReadonlyMap<string, NativeTool> = new Map([
   ["read_project_memory",  { definition: READ_PROJECT_MEMORY_DEFINITION,  executor: readProjectMemoryExecutor }],
   ["write_project_memory", { definition: WRITE_PROJECT_MEMORY_DEFINITION, executor: writeProjectMemoryExecutor }],
   ["list_project_memory",  { definition: LIST_PROJECT_MEMORY_DEFINITION,  executor: listProjectMemoryExecutor }],
+  ["request_permission",   { definition: REQUEST_PERMISSION_DEFINITION,   executor: requestPermissionExecutor }],
 ]);
 
 export function listNativeDefinitions(): ToolDefinition[] {

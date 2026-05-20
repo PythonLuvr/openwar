@@ -381,7 +381,63 @@ export interface ToolCancellation {
 }
 
 export type SessionEvent =
-  | { type: "tool_cancelled"; payload: ToolCancellation };
+  | { type: "tool_cancelled"; payload: ToolCancellation }
+  // v0.12.0: PermissionBridge lifecycle events. Mirror the trace-event
+  // variants of the same names so live consumers can observe grants
+  // without parsing the on-disk trace.
+  | { type: "permission_requested"; payload: PermissionRequest }
+  | { type: "permission_granted"; payload: PermissionGrantOutcome }
+  | { type: "permission_denied"; payload: PermissionDenialOutcome }
+  | { type: "permission_grant_consumed"; payload: { grant_id: string; consuming_tool_call_id: string; at: string } }
+  | { type: "permission_revoked"; payload: { grant_id: string; revoked_at: string } };
+
+// ---------- v0.12.0 PermissionBridge surface ----------
+//
+// Bridged CLIs (and any tool-calling adapter) call `request_permission`
+// before attempting a potentially-destructive action. The runtime routes
+// the request to the operator, captures the answer, and records a grant in
+// the per-session GrantLedger. Phase 3 honors matching grants instead of
+// firing the operator prompt again. See docs/permissions.md for the full
+// semantics.
+
+export type PermissionScope = "this_call" | "this_session" | "persistent";
+
+export interface PermissionRequest {
+  grant_id: string;
+  action: string;
+  category: string | null;
+  scope_requested: PermissionScope;
+  reasoning: string;
+  fallback: string | null;
+  at: string;
+}
+
+export interface PermissionGrantOutcome {
+  grant_id: string;
+  scope_granted: PermissionScope;
+  operator_note: string;
+  at: string;
+}
+
+export interface PermissionDenialOutcome {
+  grant_id: string;
+  operator_note: string;
+  at: string;
+}
+
+export interface Grant {
+  grant_id: string;
+  action: string;
+  category: string | null;
+  scope: PermissionScope;
+  reasoning: string;
+  granted_at: string;
+  // True once a `this_call` grant has been used. `this_session` and
+  // `persistent` grants stay consumed=false until revoked.
+  consumed: boolean;
+  // True once revoked. Revoked grants no longer match.
+  revoked?: boolean;
+}
 
 // A live handle on an active run. Returned alongside `RunResult` for callers
 // that need to interact with a run in progress (most often: cancel an
@@ -393,6 +449,15 @@ export interface Session {
   // back). Resolves false synchronously if no tool call is currently active.
   // Safe to call repeatedly; subsequent calls with no active call no-op.
   cancelCurrentToolCall(): Promise<boolean>;
+  // v0.12.0: read the active grant ledger. Returns a snapshot; mutations
+  // (addGrant / consume / revoke) go through other surfaces (the
+  // request_permission tool, Phase 3, revokeGrant below).
+  listActiveGrants(): readonly Grant[];
+  // v0.12.0: revoke a grant by id. Returns true if the grant existed and
+  // was active (not already revoked); false otherwise. Revocation is
+  // permanent for the rest of the session; persistent grants are also
+  // marked revoked in the on-disk store.
+  revokeGrant(grant_id: string): boolean;
 }
 
 export interface RunnerIO {

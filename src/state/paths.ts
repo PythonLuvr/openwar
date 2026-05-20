@@ -72,6 +72,14 @@ export function memoryFile(projectSlug: string, category: MemoryCategory): strin
   return join(projectDir(projectSlug), `${category}.jsonl`);
 }
 
+// v0.12.0: persistent PermissionBridge grants. JSONL append-only sibling to
+// the memory category files. Owned directly by the GrantLedger (not by the
+// memory tools), so the read/write/list_project_memory surface stays
+// unchanged. Loaded at session start when project_slug is set.
+export function permissionGrantsFile(projectSlug: string): string {
+  return join(projectDir(projectSlug), "permission_grants.jsonl");
+}
+
 function sanitize(id: string): string {
   return id.replace(/[^A-Za-z0-9._-]/g, "_");
 }
