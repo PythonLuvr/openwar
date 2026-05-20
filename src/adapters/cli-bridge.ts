@@ -222,15 +222,41 @@ function translateEvent(event: SquireEvent, binary: string): StreamEvent | null 
     case "message_start":
       return null;
     case "tool_call":
+      // v0.12.1: Squire vendor-aware adapters surface tool invocations
+      // happening INSIDE the bridged CLI's own run. Translate camelCase
+      // Squire fields to snake_case OpenWar fields and tag the binary.
+      return {
+        type: "bridged_tool_call",
+        call_id: event.id,
+        tool_name: event.name,
+        arguments: event.input,
+        binary,
+      };
     case "tool_result":
+      return {
+        type: "bridged_tool_result",
+        call_id: event.id,
+        result: event.output,
+        is_error: event.isError === true,
+        binary,
+      };
     case "thinking_delta":
+      return {
+        type: "bridged_thinking_delta",
+        delta: event.delta,
+        binary,
+      };
     case "usage":
-      // Squire v1.1.0 added structured per-CLI vendor events. OpenWar's
-      // StreamEvent surface does not yet carry these; they are recognized
-      // here so the exhaustive narrowing stays compile-safe, and any
-      // future StreamEvent surface for structured tool events can plug in
-      // without touching the default arm. Adoption is a separate decision.
-      return null;
+      // All four token fields are optional on the Squire side because not
+      // every vendor surfaces every counter. We pass through what we get.
+      return {
+        type: "bridged_usage",
+        binary,
+        ...(typeof event.inputTokens === "number" ? { input_tokens: event.inputTokens } : {}),
+        ...(typeof event.outputTokens === "number" ? { output_tokens: event.outputTokens } : {}),
+        ...(typeof event.cacheReadTokens === "number" ? { cache_read_tokens: event.cacheReadTokens } : {}),
+        ...(typeof event.cacheWriteTokens === "number" ? { cache_write_tokens: event.cacheWriteTokens } : {}),
+      };
     default: {
       const _exhaustive: never = event;
       void _exhaustive;
