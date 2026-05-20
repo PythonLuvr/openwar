@@ -577,6 +577,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
       sessionApproved: session.meta.session_approved_categories ?? [],
       sessionId: session.meta.brief_id,
       cancellationRegistry,
+      tracer,
       onSnapshot: (snap, events) => {
         // Project coordinator snapshot into SessionMeta (schema v3 fields).
         const metaV3 = session.meta as typeof session.meta & {

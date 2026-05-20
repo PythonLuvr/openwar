@@ -18,6 +18,7 @@ import { Tracer, nullTracer } from "../state/trace.js";
 import type { DetectorSensitivityMap } from "../state/learned-profile.js";
 import type { ToolCallRegistry } from "../runtime/cancellation.js";
 import { TOOL_CANCELLED_ERROR_CODE } from "../sandbox/types.js";
+import { handleBridgedStreamEvent, type BridgedUsageSink } from "../runtime/bridged-events.js";
 
 export interface ExecuteOpts {
   brief: Brief;
@@ -52,6 +53,12 @@ export interface ExecuteOpts {
   // Optional so existing test callers and the coordinator's inner adapter
   // path work unchanged.
   cancellationRegistry?: ToolCallRegistry;
+  // v0.12.1: optional cost-ledger sink for bridged-CLI usage events from
+  // Squire's vendor-aware adapters. Single-agent runs typically pass
+  // nothing here (no cost ledger exists); the trace still captures
+  // bridged_usage so `openwar inspect` shows the data. Multi-agent
+  // coordinator runs wire this to addBridgedUsage(cost, u).
+  onBridgedUsage?: BridgedUsageSink;
 }
 
 export interface ExecuteResult {
@@ -121,6 +128,8 @@ export async function runExecute(opts: ExecuteOpts): Promise<ExecuteResult> {
         priorToolCalls,
         priorToolResults,
         signal,
+        tracer,
+        opts.onBridgedUsage,
       );
       stepText = collected.text;
 
@@ -429,6 +438,8 @@ async function streamAndCollect(
   priorToolCalls: ToolCall[],
   priorToolResults: ToolResultForRound[],
   signal?: AbortSignal,
+  tracer?: Tracer,
+  onBridgedUsage?: BridgedUsageSink,
 ): Promise<StreamCollectResult> {
   let assembled = "";
   const toolCalls: ToolCall[] = [];
@@ -440,6 +451,10 @@ async function streamAndCollect(
     ...(priorToolResults.length > 0 && { prior_tool_results: priorToolResults }),
     ...(signal ? { signal } : {}),
   }) as AsyncIterable<StreamEvent>) {
+    // v0.12.1: route bridged_* events to the trace + optional cost
+    // ledger. Returns true when handled; native variants fall through to
+    // the existing switch below.
+    if (tracer && handleBridgedStreamEvent(ev, tracer, onBridgedUsage)) continue;
     if (ev.type === "text_delta") {
       io.write(ev.delta);
       assembled += ev.delta;

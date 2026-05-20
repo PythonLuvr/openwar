@@ -63,6 +63,9 @@ import type { ToolExecutor } from "../tools/types.js";
 import { checkAuthorizationWithRole } from "../auth/check.js";
 import type { ToolCallRegistry } from "../runtime/cancellation.js";
 import { TOOL_CANCELLED_ERROR_CODE } from "../sandbox/types.js";
+import type { Tracer } from "../state/trace.js";
+import { handleBridgedStreamEvent, type BridgedUsageSink } from "../runtime/bridged-events.js";
+import { addBridgedUsage } from "./cost-tracker.js";
 
 export interface RunCoordinatorOptions {
   brief: Brief;
@@ -105,6 +108,12 @@ export interface RunCoordinatorOptions {
   // mid-call. Cancellation ends the current role's turn; the coordinator
   // does not auto-retry (per the brief).
   cancellationRegistry?: ToolCallRegistry;
+  // v0.12.1: optional global tracer. When present, the coordinator routes
+  // bridged_* StreamEvent variants from cli-bridge into the trace and
+  // attributes bridged usage tokens to the coordinator's cost ledger via
+  // addBridgedUsage. Omitted callers see no bridged-event capture in the
+  // trace; the cost ledger is unaffected.
+  tracer?: Tracer;
 }
 
 export interface CoordinatorRunResult extends Omit<RunResult, "session_id"> {
@@ -241,6 +250,7 @@ export async function runCoordinator(
         events,
         recordEvent,
         signal,
+        ...(opts.tracer ? { tracer: opts.tracer } : {}),
       });
       if (sig.kind === "plan_ready" && sig.kind === "plan_ready") {
         // Capture the plan into the snapshot.
@@ -282,6 +292,7 @@ export async function runCoordinator(
         budgets: opts.budgets,
         signal,
         ...(opts.cancellationRegistry ? { cancellationRegistry: opts.cancellationRegistry } : {}),
+        ...(opts.tracer ? { tracer: opts.tracer } : {}),
       });
       if (sig.handoff) {
         outcomes.set(sub.id, {
@@ -323,6 +334,7 @@ export async function runCoordinator(
         recordEvent,
         signal,
         includeCritic: opts.roleIds.includes("critic"),
+        ...(opts.tracer ? { tracer: opts.tracer } : {}),
       });
       if (reviewSig.review) {
         const prior = outcomes.get(sub.id);
@@ -406,6 +418,7 @@ async function runPlanState(args: {
   events: CoordinatorEvent[];
   recordEvent: (e: CoordinatorEvent) => void;
   signal?: AbortSignal;
+  tracer?: Tracer;
 }): Promise<PlanStateResult> {
   const role = getRole("planner");
   if (!role) {
@@ -434,7 +447,11 @@ async function runPlanState(args: {
     meta: { phase: "execute", orch_role: "planner", step_index: 0 },
   };
   const history = [...(args.roleHistories["planner"] ?? []), userTurn];
-  const { text } = await streamAndCollect(args.adapter, system, history, args.io, args.signal);
+  const { text } = await streamAndCollect(
+    args.adapter, system, history, args.io, args.signal,
+    args.tracer,
+    (u) => addBridgedUsage(args.cost, u),
+  );
   args.cost.tokens_used += estimateTokens(system) + estimateTokens(userTurn.content) + estimateTokens(text);
 
   const assistant: Message = {
@@ -485,6 +502,7 @@ async function runExecuteState(args: {
   budgets: Budgets;
   signal?: AbortSignal;
   cancellationRegistry?: ToolCallRegistry;
+  tracer?: Tracer;
 }): Promise<ExecuteStateResult> {
   const role = getRole("executor");
   if (!role) {
@@ -533,6 +551,8 @@ async function runExecuteState(args: {
       args.io,
       args.toolDefinitions,
       args.signal,
+      args.tracer,
+      (u) => addBridgedUsage(args.cost, u),
     );
     assembledText = collected.text;
     args.cost.tokens_used += estimateTokens(collected.text);
@@ -742,6 +762,7 @@ async function runReviewState(args: {
   recordEvent: (e: CoordinatorEvent) => void;
   signal?: AbortSignal;
   includeCritic: boolean;
+  tracer?: Tracer;
 }): Promise<ReviewStateResult> {
   const reviewer = getRole("reviewer");
   if (!reviewer) {
@@ -788,6 +809,7 @@ async function invokeReviewer(
     events: CoordinatorEvent[];
     recordEvent: (e: CoordinatorEvent) => void;
     signal?: AbortSignal;
+    tracer?: Tracer;
   },
 ): Promise<{ review?: ReviewHandoff }> {
   args.recordEvent({
@@ -818,7 +840,11 @@ async function invokeReviewer(
     meta: { phase: "execute", orch_role: role.id, subtask_id: args.subtask.id },
   };
   const history = [...(args.roleHistories[role.id] ?? []), userTurn];
-  const { text } = await streamAndCollect(args.adapter, system, history, args.io, args.signal);
+  const { text } = await streamAndCollect(
+    args.adapter, system, history, args.io, args.signal,
+    args.tracer,
+    (u) => addBridgedUsage(args.cost, u),
+  );
   args.cost.tokens_used += estimateTokens(text);
 
   const assistant: Message = {
@@ -854,6 +880,8 @@ async function streamAndCollect(
   messages: Message[],
   io: RunnerIO,
   signal?: AbortSignal,
+  tracer?: Tracer,
+  onBridgedUsage?: BridgedUsageSink,
 ): Promise<{ text: string }> {
   let assembled = "";
   for await (const ev of adapter.sendMessage({
@@ -861,6 +889,7 @@ async function streamAndCollect(
     messages,
     ...(signal ? { signal } : {}),
   }) as AsyncIterable<StreamEvent>) {
+    if (tracer && handleBridgedStreamEvent(ev, tracer, onBridgedUsage)) continue;
     if (ev.type === "text_delta") {
       io.write(ev.delta);
       assembled += ev.delta;
@@ -882,6 +911,8 @@ async function streamAndCollectWithTools(
   io: RunnerIO,
   tools: ToolDefinition[] | undefined,
   signal?: AbortSignal,
+  tracer?: Tracer,
+  onBridgedUsage?: BridgedUsageSink,
 ): Promise<CollectResult> {
   let assembled = "";
   const toolCalls: import("../types.js").ToolCall[] = [];
@@ -889,6 +920,7 @@ async function streamAndCollectWithTools(
   if (tools && tools.length > 0) opts.tools = tools;
   if (signal) opts.signal = signal;
   for await (const ev of adapter.sendMessage(opts) as AsyncIterable<StreamEvent>) {
+    if (tracer && handleBridgedStreamEvent(ev, tracer, onBridgedUsage)) continue;
     if (ev.type === "text_delta") {
       io.write(ev.delta);
       assembled += ev.delta;

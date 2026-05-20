@@ -30,6 +30,38 @@ export function addTokens(usage: CostUsage, tokens: number): void {
   usage.tokens_used += tokens;
 }
 
+// v0.12.1: bridged-CLI usage from Squire's vendor-aware adapters. Input +
+// output tokens flow into tokens_used like everything else (budget-relevant).
+// Cache reads/writes are stored separately for visibility but do NOT inflate
+// tokens_used: cache reads bill at a fraction of normal input rates (Anthropic
+// roughly 10%) and including them would trip --max-tokens budget gates
+// prematurely. Operators reading the trace see the cache breakdown in the
+// bridged_usage event; the cost ledger surfaces it through the per-session
+// bridged_tokens_* fields without distorting the running budget total.
+export interface BridgedUsageInput {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+}
+
+export function addBridgedUsage(usage: CostUsage, u: BridgedUsageInput): void {
+  if (typeof u.input_tokens === "number" && u.input_tokens > 0) {
+    usage.tokens_used += u.input_tokens;
+    usage.bridged_tokens_input = (usage.bridged_tokens_input ?? 0) + u.input_tokens;
+  }
+  if (typeof u.output_tokens === "number" && u.output_tokens > 0) {
+    usage.tokens_used += u.output_tokens;
+    usage.bridged_tokens_output = (usage.bridged_tokens_output ?? 0) + u.output_tokens;
+  }
+  if (typeof u.cache_read_tokens === "number" && u.cache_read_tokens > 0) {
+    usage.bridged_tokens_cache_read = (usage.bridged_tokens_cache_read ?? 0) + u.cache_read_tokens;
+  }
+  if (typeof u.cache_write_tokens === "number" && u.cache_write_tokens > 0) {
+    usage.bridged_tokens_cache_write = (usage.bridged_tokens_cache_write ?? 0) + u.cache_write_tokens;
+  }
+}
+
 export function setWallClock(usage: CostUsage, ms: number): void {
   usage.wall_clock_ms = Math.max(usage.wall_clock_ms, ms);
 }
