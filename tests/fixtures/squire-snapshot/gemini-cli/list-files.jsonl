@@ -1,0 +1,8 @@
+{"type":"init","timestamp":"2026-05-19T00:00:00.000Z","session_id":"00000000-0000-0000-0000-000000000002","model":"gemini-2.5-flash"}
+{"type":"message","timestamp":"2026-05-19T00:00:00.001Z","role":"user","content":"List the files in the current directory using your file system tool. Then summarize what you see in one sentence."}
+{"type":"tool_use","timestamp":"2026-05-19T00:00:00.100Z","tool_name":"list_directory","tool_id":"list_directory_1_0","parameters":{"dir_path":"."}}
+{"type":"tool_result","timestamp":"2026-05-19T00:00:00.150Z","tool_id":"list_directory_1_0","status":"success"}
+{"type":"message","timestamp":"2026-05-19T00:00:00.200Z","role":"assistant","content":"The directory","delta":true}
+{"type":"message","timestamp":"2026-05-19T00:00:00.210Z","role":"assistant","content":" contains alpha.txt, beta.txt,","delta":true}
+{"type":"message","timestamp":"2026-05-19T00:00:00.220Z","role":"assistant","content":" and gamma.txt.","delta":true}
+{"type":"result","timestamp":"2026-05-19T00:00:00.300Z","status":"success","stats":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":0,"input":120,"duration_ms":300,"tool_calls":1,"models":{"gemini-2.5-flash":{"total_tokens":150,"input_tokens":120,"output_tokens":30,"cached":0,"input":120}}}}

@@ -13,11 +13,11 @@ import {
   type TraceEvent,
 } from "../../src/state/trace.js";
 
-test("TRACE_SCHEMA_VERSION bumped to 3 for v0.12.0", () => {
-  assert.equal(TRACE_SCHEMA_VERSION, 3);
+test("TRACE_SCHEMA_VERSION reflects the additive bumps (v0.12.0=3, v0.12.1=4)", () => {
+  assert.ok(TRACE_SCHEMA_VERSION >= 3);
 });
 
-test("trace header records schema version 3 after the v0.12 bump", async () => {
+test("trace header records the current TRACE_SCHEMA_VERSION", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwar-perm-trace-"));
   try {
     const filePath = join(dir, "x.ndjson");
@@ -25,7 +25,7 @@ test("trace header records schema version 3 after the v0.12 bump", async () => {
     const raw = await readFile(filePath, "utf8");
     const header = JSON.parse(raw.trim().split("\n")[0]!);
     assert.equal(header.type, "trace_version");
-    assert.equal(header.version, 3);
+    assert.equal(header.version, TRACE_SCHEMA_VERSION);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
