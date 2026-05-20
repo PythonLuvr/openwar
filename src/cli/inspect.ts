@@ -140,6 +140,10 @@ function formatEventLine(ev: TraceEvent): string {
       return `${at}  br_thinking  ${ev.binary}  bytes=${ev.delta.length}`;
     case "bridged_usage":
       return `${at}  br_usage     ${ev.binary}  in=${ev.input_tokens ?? 0} out=${ev.output_tokens ?? 0} cache_r=${ev.cache_read_tokens ?? 0} cache_w=${ev.cache_write_tokens ?? 0}`;
+    case "proxy_request":
+      return `${at}  proxy_req    req=${ev.request_id}  ${ev.client_addr}  model=${ev.model}  stream=${ev.stream}  tools=${ev.tool_count}${ev.model_substituted_from ? `  subbed_from=${ev.model_substituted_from}` : ""}`;
+    case "proxy_response":
+      return `${at}  proxy_res    req=${ev.request_id}  ${ev.status_code}  ${ev.duration_ms}ms  bytes=${ev.bytes_written}${ev.cancelled ? "  cancelled" : ""}`;
     case "error":
       return `${at}  ERROR        phase=${ev.phase}  ${ev.error}`;
     default: {

@@ -20,10 +20,12 @@ import type { Phase, RoleId, CoordinatorState, SubTaskStatus } from "../types.js
 // v0.11.1 bumps to 2 for the additive `tool_cancelled` event type.
 // v0.12.0 bumps to 3 for the additive `permission_*` event types.
 // v0.12.1 bumps to 4 for the additive `bridged_*` event types (cli-bridge
-// structured-event capture from Squire's vendor-aware adapters). Each
-// bump is forward-compatible: readers that only know older event types
-// skip unknown ones.
-export const TRACE_SCHEMA_VERSION = 4;
+// structured-event capture from Squire's vendor-aware adapters).
+// v0.13.0 bumps to 5 for the additive `proxy_*` event types
+// (openwar serve --openai-compat per-request bookkeeping). Each bump is
+// forward-compatible: readers that only know older event types skip
+// unknown ones.
+export const TRACE_SCHEMA_VERSION = 5;
 
 export type TraceEvent =
   | { type: "trace_version"; version: number; openwar_version: string; brief_id: string; at: string }
@@ -158,6 +160,33 @@ export type TraceEvent =
       output_tokens?: number;
       cache_read_tokens?: number;
       cache_write_tokens?: number;
+      at: string;
+    }
+  // v0.13.0: openwar serve --openai-compat per-request bookkeeping.
+  // proxy_request stamps the start of a synthesized-brief run that came
+  // in over the HTTP proxy; proxy_response stamps the end. Optional
+  // `model_substituted_from` records when the client's requested model
+  // did not match the configured upstream and the proxy fell back to
+  // `--upstream-model` (Phase 0 Q1: folded into proxy_request rather
+  // than a separate proxy_model_substituted event for trace surface
+  // compactness).
+  | {
+      type: "proxy_request";
+      request_id: string;
+      client_addr: string;
+      model: string;
+      stream: boolean;
+      tool_count: number;
+      model_substituted_from?: string;
+      at: string;
+    }
+  | {
+      type: "proxy_response";
+      request_id: string;
+      status_code: number;
+      duration_ms: number;
+      bytes_written: number;
+      cancelled: boolean;
       at: string;
     }
   | { type: "error"; error: string; phase: Phase; at: string };

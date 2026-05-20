@@ -13,11 +13,13 @@ import {
   type TraceEvent,
 } from "../../src/state/trace.js";
 
-test("TRACE_SCHEMA_VERSION bumped to 4 for v0.12.1 bridged_* events", () => {
-  assert.equal(TRACE_SCHEMA_VERSION, 4);
+test("TRACE_SCHEMA_VERSION reflects the additive bumps through v0.12.1+", () => {
+  // v0.12.1 introduced bridged_* at version 4; later versions add more
+  // additive event types. Anchor only on the floor.
+  assert.ok(TRACE_SCHEMA_VERSION >= 4);
 });
 
-test("trace header records schema version 4 after the v0.12.1 bump", async () => {
+test("trace header records the current TRACE_SCHEMA_VERSION", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwar-bridged-trace-"));
   try {
     const filePath = join(dir, "x.ndjson");
@@ -25,7 +27,7 @@ test("trace header records schema version 4 after the v0.12.1 bump", async () =>
     const raw = await readFile(filePath, "utf8");
     const header = JSON.parse(raw.trim().split("\n")[0]!);
     assert.equal(header.type, "trace_version");
-    assert.equal(header.version, 4);
+    assert.equal(header.version, TRACE_SCHEMA_VERSION);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
