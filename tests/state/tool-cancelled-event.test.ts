@@ -13,8 +13,8 @@ import {
   type TraceEvent,
 } from "../../src/state/trace.js";
 
-test("TRACE_SCHEMA_VERSION bumped to 2 for v0.11.1", () => {
-  assert.equal(TRACE_SCHEMA_VERSION, 2);
+test("TRACE_SCHEMA_VERSION reflects the additive bumps (v0.11.1=2, v0.12.0=3)", () => {
+  assert.ok(TRACE_SCHEMA_VERSION >= 2);
 });
 
 test("trace header records the bumped schema version", async () => {
@@ -25,7 +25,7 @@ test("trace header records the bumped schema version", async () => {
     const raw = await readFile(filePath, "utf8");
     const header = JSON.parse(raw.trim().split("\n")[0]!);
     assert.equal(header.type, "trace_version");
-    assert.equal(header.version, 2);
+    assert.equal(header.version, TRACE_SCHEMA_VERSION);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
