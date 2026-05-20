@@ -35,8 +35,15 @@ openwar roles                                # list registered roles
 openwar adapters
 openwar tools
 openwar mcp list | add <name> <cmd...> | remove <name> | test <name>
+openwar serve --openai-compat [--port <n>] [--bind <host>]              # v0.13.0+
+              [--upstream-adapter <id>] [--upstream-model <name>]
+              [--auth-token <token>] [--no-auth]
+              [--workdir <path>] [--authorized-costs <list>]
+              [--max-concurrent <n>] [--log-requests]
 openwar version
 ```
+
+The `openwar serve --openai-compat` subcommand exposes OpenWar's runtime as an OpenAI Chat Completions HTTP server. Any tool that speaks OpenAI's API points at it and consumes OpenWar's discipline layer with zero changes on its end. v0.13.0 ships plain-text chat completions (streaming + non-streaming) with bearer-token auth, localhost-default bind, conservative `authorized_costs` defaults, and per-request trace files at `~/.openwar/sessions/proxy-<uuid>.trace.ndjson`. Tool surface lands in v0.13.1. See [`docs/openai-proxy.md`](./openai-proxy.md) for the full surface and worked examples.
 
 ## Common flags
 

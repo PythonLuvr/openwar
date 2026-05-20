@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.13.0
+
+OpenAI-compatible proxy server (MVP cut). `openwar serve --openai-compat` exposes a `POST /v1/chat/completions` endpoint plus `/v1/models` and `/healthz` over hand-rolled `node:http`. Any tool that speaks OpenAI's API (Aider, Continue, Cline, OpenAI SDKs, homegrown wrappers) can point at the server with one env-var change and consume OpenWar's discipline layer with zero modifications. The tool thinks it is talking to OpenAI; OpenWar routes the request through its phase machine, records a per-request trace, and dispatches the completion to whatever upstream adapter is configured.
+
+This release is a **distribution trojan horse**, not a feature for existing OpenWar users. Existing operators keep using `openwar run` and `openwar chat`; the proxy is for the developer who already uses Aider against OpenAI and wants discipline without rewriting their workflow.
+
+Originally scoped as one ship with the full `tools` surface. Phase 0 review caught that OpenAI Chat Completions has more gotchas than the brief acknowledged (`tool_choice` variants, `finish_reason` mapping, the `role: "tool"` + `tool_call_id` conversation pattern), and that bidirectional tool-call translation deserves its own ship. Split into v0.13.0 (HTTP + chat completions MVP without tools) and v0.13.1 (tool-call round-trip + PermissionBridge negotiation + cli-bridge composition polish + three-client integration examples). The split puts integration risk where it belongs and lets v0.13.0 ship a real distribution lever (any OpenAI-compat tool can hit the proxy for non-tool prompts today) while v0.13.1 closes the tool surface with v0.13.0 real-world usage signal informing the design. Five-for-five on the split pattern (v0.7 / v0.9 / v0.10 / v0.11 / v0.13).
+
+### Added
+
+- **`openwar serve` subcommand** with the `--openai-compat` flag. CLI surface: `--port` (default 1234, LM Studio convention), `--bind` (default 127.0.0.1; warns on 0.0.0.0), `--upstream-adapter` (auto-detected via the standard BYOK env-var precedence), `--upstream-model`, `--auth-token` (required unless `--no-auth`), `--no-auth` (warns every startup), `--workdir`, `--authorized-costs` (default `filesystem_read` only; startup banner explains the expansion pattern for agentic clients), `--max-concurrent` (default 4; excess returns 429), `--log-requests`.
+- **`src/serve/` directory** with eight modules: `types.ts` (ServeOptions + narrowed OpenAI types), `auth.ts` (constant-time bearer compare + OpenAI-shaped 401), `concurrency.ts` (atomic check-and-claim gate + OpenAI-shaped 429), `openai-parse.ts` (request body parsing + 400 mapping), `synthesize-brief.ts` (in-memory brief synthesis from an OpenAI request; mode=auto, scope_locked=true), `openai-translate.ts` (non-streaming response builder + denial refusal helper + trace-id header), `openai-streaming.ts` (hand-rolled SSE encoder with role / content / finish chunks and the `data: [DONE]\n\n` sentinel), `openai-router.ts` (the per-request dispatch loop), `server.ts` (bootstrap + graceful shutdown).
+- **`X-OpenWar-Trace-Id` response header** on every response so operators (and OpenWar-aware tooling) can `openwar inspect proxy-<uuid>` to audit a completed run.
+- **Per-request synthesized brief** at `~/.openwar/sessions/proxy-<uuid>.trace.ndjson`. The brief never touches disk under `~/.openwar/projects/<slug>/`. proxy sessions are project-less by design. Persistent permission grants from prior projects are NOT seeded into proxy sessions.
+- **Two new trace event variants** for proxy bookkeeping: `proxy_request` (start; carries request_id, client_addr, model, stream, tool_count, at, optional model_substituted_from) and `proxy_response` (end; carries request_id, status_code, duration_ms, bytes_written, cancelled, at). `TRACE_SCHEMA_VERSION` bumped 4 to 5, additive.
+- **`openwar inspect --trace` formatter** picks up the new event types with single-line shapes (`proxy_req` / `proxy_res`).
+- **Streaming SSE encoder** for streaming responses. Hand-rolled per the zero-new-deps constraint. Matches OpenAI's exact byte format including the `data: {json}\n\n` per-chunk shape and the terminal `data: [DONE]\n\n` sentinel that the OpenAI SDKs read for end-of-stream.
+- **Graceful shutdown on SIGINT.** First Ctrl-C drains in-flight requests for up to 5 seconds then closes; second Ctrl-C force-exits with code 130. Mirrors the chat REPL's escalation pattern from v0.11.1.
+- **60 new tests** across `tests/serve/auth.test.ts`, `tests/serve/concurrency.test.ts`, `tests/serve/openai-parse.test.ts`, `tests/serve/synthesize-brief.test.ts`, `tests/serve/openai-translate.test.ts` (covers both translate.ts and streaming.ts), `tests/serve/openai-router.test.ts` (in-process server on ephemeral port, fetch + MockAdapter end-to-end), `tests/serve/proxy-trace.test.ts` (round-trip of both new event types plus end-to-end trace file shape). Total 849 to 909 (60 new; brief estimated 25 for v0.13.0). Well above target because the OpenAI surface has more leaves than the brief estimated.
+
+### Phase 0 rulings encoded
+
+- **Q1 model substitution folded into `proxy_request.model_substituted_from?`** rather than a separate `proxy_model_substituted` event. Cleaner trace surface, same observability.
+- **Q2 mid-stream Phase 3 gate encoding = refusal text + `finish_reason: "content_filter"`.** The brief's original "tool_calls chunk with error result as the result" was shape-wise wrong (tool results come from the client in subsequent requests, not from the assistant in the same stream). v0.13.0 ships the encoding helpers (`denialRefusalText`, `encodeFinishChunk` with `content_filter`) ready for v0.13.1 when the tool surface lights up and Phase 3 actually fires in proxy mode.
+- **Q3 OpenWar tool name routing = `openwar:` prefix is the contract.** Bare tool names are client-owned and pass through to the upstream adapter. Aligns with the existing MCP namespace convention. Documented in `docs/openai-proxy.md`.
+- **Q4 cli-bridge upstream startup warning shipped verbatim.** Composition is supported, not silent; the operator gets explicit notice about per-request CLI spawn costs and the `--max-concurrent 1` recommendation.
+- **Q5 startup curl example shipped in the startup banner** per the brief's lean.
+- **Q6 `X-OpenWar-Trace-Id` response header** shipped per the brief's lean.
+- **Q7 429 shape = OpenAI `rate_limit_error`** with `code: "openwar_max_concurrent"` per the brief's lean.
+- **Q8 no legacy `prompt` field** support; documented.
+- **Q9 fixture strategy = fabricated for the automated suite.** Real-client end-to-end (Aider preferred) is a publisher pre-tag manual smoke check, documented in the Phase 4 handback.
+- **Q10 default port 1234** per the brief's lean.
+
+### Out of scope for v0.13.0 (deferred to v0.13.1)
+
+- Tool-call translation. v0.13.0 acknowledges `tools` at parse time and surfaces the count in `proxy_request.tool_count`, but does not yet round-trip tool calls. Plain-text Aider / Continue / Cline sessions work; agentic tool use does not.
+- PermissionBridge negotiation via `openwar:request_permission` tool_calls.
+- cli-bridge composition is structurally supported and warned about; agentic capability is gated on the tool surface.
+- Comprehensive three-client integration examples in `docs/openai-proxy.md`.
+
+### Out of scope permanently
+
+Legacy `/v1/completions`, embeddings, Assistants API, legacy `functions` field, WebSocket realtime, multi-tenant auth, TLS in-process (use a reverse proxy), persistent grants in proxy sessions, rate limiting beyond `--max-concurrent`. See `docs/openai-proxy.md` for the full scope wall.
+
+### Changed
+
+- **`docs/openai-proxy.md`** (new). canonical reference for the proxy: scope, threat model, CLI surface, composition with cli-bridge, trace surface, out-of-scope wall, Aider worked example.
+- **`docs/observability.md`**. two new event types documented; schema version bump noted.
+- **`docs/cli.md`**. `openwar serve` subcommand documented with the full flag surface and a pointer to `docs/openai-proxy.md`.
+- **`README.md`**. docs index gains an OpenAI-compatible proxy row.
+
+### Constraints honored
+
+- Zero new runtime deps. Hand-rolled `node:http`, hand-rolled SSE encoder. UUIDs from `node:crypto.randomUUID`. No Express, no Fastify, no body-parser.
+- TypeScript strict mode green.
+- Em-dash gate green. Sanity-regex gate green.
+- Backwards compatible. No existing CLI command, library export, or trace event shape changes. The serve subcommand, the new directory, and the two new trace events are all additive.
+- Localhost-default bind. Auth-required-by-default. Conservative `authorized_costs` default. All three security stances honored at startup; warnings emitted when the operator opts out.
+
 ## 0.12.1
 
 Squire structured-event adoption. v0.11.2 added no-op case arms so the build stayed compile-safe against Squire 1.1.0's four new event variants; v0.12.1 wires them up. The runtime now sees what a bridged CLI sees: every tool the bridged Claude Code or Gemini CLI invokes, every result, every thinking-mode token, and every usage report. The trace, the cost ledger, and `openwar inspect --tools` all surface the new data.

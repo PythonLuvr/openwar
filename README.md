@@ -128,6 +128,7 @@ If the agent skips the Confirmation Summary, the runtime asks it to restate befo
 | Adapters (Anthropic, OpenAI, Gemini, Grok, openai-compat, cli-bridge) | [`docs/adapters.md`](./docs/adapters.md) |
 | Native tools and MCP | [`docs/tools.md`](./docs/tools.md) |
 | PermissionBridge (v0.12+) | [`docs/permissions.md`](./docs/permissions.md) |
+| OpenAI-compatible proxy (v0.13+) | [`docs/openai-proxy.md`](./docs/openai-proxy.md) |
 | Observability and tracing (v0.8+) | [`docs/observability.md`](./docs/observability.md) |
 | Learning from run history (v0.9+) | [`docs/learning.md`](./docs/learning.md) |
 | Chat (v0.10+) | [`docs/chat.md`](./docs/chat.md) |
