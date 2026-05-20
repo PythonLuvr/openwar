@@ -132,6 +132,14 @@ function formatEventLine(ev: TraceEvent): string {
       return `${at}  perm_use     grant=${ev.grant_id}  by_call=${ev.consuming_tool_call_id}`;
     case "permission_revoked":
       return `${at}  perm_revoke  grant=${ev.grant_id}`;
+    case "bridged_tool_call":
+      return `${at}  br_tool_call ${ev.binary}::${ev.tool_name}  call=${ev.call_id}`;
+    case "bridged_tool_result":
+      return `${at}  br_tool_res  ${ev.binary}  call=${ev.call_id}  ${ev.is_error ? "err" : "ok"}`;
+    case "bridged_thinking_delta":
+      return `${at}  br_thinking  ${ev.binary}  bytes=${ev.delta.length}`;
+    case "bridged_usage":
+      return `${at}  br_usage     ${ev.binary}  in=${ev.input_tokens ?? 0} out=${ev.output_tokens ?? 0} cache_r=${ev.cache_read_tokens ?? 0} cache_w=${ev.cache_write_tokens ?? 0}`;
     case "error":
       return `${at}  ERROR        phase=${ev.phase}  ${ev.error}`;
     default: {
@@ -202,16 +210,23 @@ export function formatDetectors(events: readonly TraceEvent[]): string {
 }
 
 // --- Tools mode: tool call log with auth decisions. ---
+//
+// v0.12.1: groups output by source. The "Native tool calls" section
+// captures OpenWar's runtime dispatching its own tools (tool_call /
+// tool_result events). The "Bridged CLI tool calls" section captures
+// tools invoked INSIDE a bridged CLI's own run, surfaced via Squire's
+// vendor-aware adapters (bridged_tool_call / bridged_tool_result
+// events). Both sections sort chronologically.
 
 export function formatTools(events: readonly TraceEvent[]): string {
-  const calls = events.filter((e) => e.type === "tool_call") as Extract<TraceEvent, { type: "tool_call" }>[];
-  const results = new Map<string, Extract<TraceEvent, { type: "tool_result" }>>();
+  // --- Native section ---
+  const nativeCalls = events.filter((e) => e.type === "tool_call") as Extract<TraceEvent, { type: "tool_call" }>[];
+  const nativeResults = new Map<string, Extract<TraceEvent, { type: "tool_result" }>>();
   for (const e of events) {
-    if (e.type === "tool_result") results.set(e.call_id, e);
+    if (e.type === "tool_result") nativeResults.set(e.call_id, e);
   }
-  if (calls.length === 0) return "(no tool_call events in this trace)";
-  const rows: string[][] = calls.map((c) => {
-    const r = results.get(c.call_id);
+  const nativeRows: string[][] = nativeCalls.map((c) => {
+    const r = nativeResults.get(c.call_id);
     return [
       c.at,
       c.name,
@@ -221,7 +236,34 @@ export function formatTools(events: readonly TraceEvent[]): string {
       r ? `${r.bytes}B` : "-",
     ];
   });
-  return table(["at", "tool", "auth", "result", "duration", "bytes"], rows);
+
+  // --- Bridged section ---
+  const bridgedCalls = events.filter((e) => e.type === "bridged_tool_call") as Extract<TraceEvent, { type: "bridged_tool_call" }>[];
+  const bridgedResults = new Map<string, Extract<TraceEvent, { type: "bridged_tool_result" }>>();
+  for (const e of events) {
+    if (e.type === "bridged_tool_result") bridgedResults.set(e.call_id, e);
+  }
+  const bridgedRows: string[][] = bridgedCalls.map((c) => {
+    const r = bridgedResults.get(c.call_id);
+    return [
+      c.at,
+      c.binary,
+      c.tool_name,
+      r ? (r.is_error ? "err" : "ok") : "pending",
+    ];
+  });
+
+  const sections: string[] = [];
+  if (nativeRows.length > 0) {
+    sections.push("Native tool calls (OpenWar runtime):");
+    sections.push(table(["at", "tool", "auth", "result", "duration", "bytes"], nativeRows));
+  }
+  if (bridgedRows.length > 0) {
+    sections.push("Bridged CLI tool calls (from inside the bridged CLI's run):");
+    sections.push(table(["at", "binary", "tool", "result"], bridgedRows));
+  }
+  if (sections.length === 0) return "(no tool_call or bridged_tool_call events in this trace)";
+  return sections.join("\n\n");
 }
 
 // --- MCP mode: combined view of server lifecycle + call dispatches. ---

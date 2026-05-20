@@ -18,10 +18,12 @@ import { traceFile, sessionsDir } from "./paths.js";
 import type { Phase, RoleId, CoordinatorState, SubTaskStatus } from "../types.js";
 
 // v0.11.1 bumps to 2 for the additive `tool_cancelled` event type.
-// v0.12.0 bumps to 3 for the additive `permission_*` event types. Each bump
-// is forward-compatible: readers that only know older event types skip
-// unknown ones.
-export const TRACE_SCHEMA_VERSION = 3;
+// v0.12.0 bumps to 3 for the additive `permission_*` event types.
+// v0.12.1 bumps to 4 for the additive `bridged_*` event types (cli-bridge
+// structured-event capture from Squire's vendor-aware adapters). Each
+// bump is forward-compatible: readers that only know older event types
+// skip unknown ones.
+export const TRACE_SCHEMA_VERSION = 4;
 
 export type TraceEvent =
   | { type: "trace_version"; version: number; openwar_version: string; brief_id: string; at: string }
@@ -113,6 +115,50 @@ export type TraceEvent =
       type: "permission_revoked";
       grant_id: string;
       revoked_at: string;
+    }
+  // v0.12.1: structured events captured from inside a bridged CLI's own
+  // run. Squire's vendor-aware adapters emit `tool_call`, `tool_result`,
+  // `thinking_delta`, and `usage` from formats like Claude Code's
+  // stream-json output; the cli-bridge adapter translates them to these
+  // `bridged_*` trace variants. Distinct from the existing native-tool
+  // `tool_call` / `tool_result` events, which capture OpenWar's runtime
+  // dispatching its own tools to the streaming LLM. `binary` names the
+  // CLI that emitted the event (e.g. "claude", "gemini").
+  | {
+      type: "bridged_tool_call";
+      call_id: string;
+      tool_name: string;
+      arguments: unknown;
+      binary: string;
+      at: string;
+    }
+  | {
+      type: "bridged_tool_result";
+      call_id: string;
+      result: unknown;
+      is_error: boolean;
+      binary: string;
+      at: string;
+    }
+  | {
+      type: "bridged_thinking_delta";
+      delta: string;
+      binary: string;
+      at: string;
+    }
+  // v0.12.1 also emits bridged_usage to the trace (in addition to feeding
+  // the cost ledger when one exists) so single-agent cli-bridge runs
+  // without a coordinator don't lose usage observability. Cache fields
+  // are recorded separately from input/output for visibility; the cost
+  // ledger only counts input + output toward `tokens_used`.
+  | {
+      type: "bridged_usage";
+      binary: string;
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_tokens?: number;
+      cache_write_tokens?: number;
+      at: string;
     }
   | { type: "error"; error: string; phase: Phase; at: string };
 

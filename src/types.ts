@@ -211,7 +211,26 @@ export type StreamEvent =
   // Emitted once the tool call is fully assembled and ready to dispatch.
   | { type: "tool_call_complete"; call: ToolCall }
   | { type: "done"; message: string; tool_calls?: ToolCall[] }
-  | { type: "error"; error: Error };
+  | { type: "error"; error: Error }
+  // v0.12.1: structured events from inside a bridged CLI's own run.
+  // Squire's vendor-aware adapters (claude-code, gemini-cli) emit these;
+  // OpenWar's translate layer in src/adapters/cli-bridge.ts maps them to
+  // these `bridged_` prefixed StreamEvent variants. The prefix is
+  // load-bearing: it signals "this came from inside a bridged CLI's own
+  // run" and disambiguates from OpenWar's own native-tool dispatch
+  // events above. Field naming is snake_case (OpenWar convention);
+  // Squire's camelCase shapes are translated at the cli-bridge boundary.
+  | { type: "bridged_tool_call"; call_id: string; tool_name: string; arguments: unknown; binary: string }
+  | { type: "bridged_tool_result"; call_id: string; result: unknown; is_error: boolean; binary: string }
+  | { type: "bridged_thinking_delta"; delta: string; binary: string }
+  | {
+      type: "bridged_usage";
+      binary: string;
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_tokens?: number;
+      cache_write_tokens?: number;
+    };
 
 export interface AgentAdapter {
   readonly id: string;
@@ -706,6 +725,16 @@ export interface CostUsage {
   // Per-sub-task tool-call count, indexed by subtask_id.
   tool_calls_by_subtask: Record<string, number>;
   started_at: string;
+  // v0.12.1: bridged-CLI token attribution. Input + output flow into
+  // tokens_used like everything else (budget-relevant). Cache reads/writes
+  // are recorded here separately for visibility but do NOT inflate
+  // tokens_used: cache reads bill at a fraction of normal rates and
+  // including them would trip budget gates prematurely. Optional so older
+  // serialized sessions still deserialize cleanly.
+  bridged_tokens_input?: number;
+  bridged_tokens_output?: number;
+  bridged_tokens_cache_read?: number;
+  bridged_tokens_cache_write?: number;
 }
 
 // ---------- Coordinator session extensions (schema v3) ----------
