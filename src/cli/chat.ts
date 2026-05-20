@@ -270,6 +270,11 @@ export async function runChatCommand(opts: ChatCommandOptions): Promise<number> 
     workdir,
     store,
     contextNotes: context.notes,
+    // v0.12.0: expose live grant ledger to the ChatSession so `/grants` and
+    // `/revoke` slash commands work against the currently-running session.
+    // Returns empty / false when no run is active.
+    getActiveGrants: () => liveSession?.listActiveGrants() ?? [],
+    revokeGrant: (id: string) => liveSession?.revokeGrant(id) ?? false,
     executeRun: async (brief: Brief) => {
       // v0.10.0: when a learned profile exists for this project, stamp it
       // into the compiled brief's frontmatter so the runtime applies it at

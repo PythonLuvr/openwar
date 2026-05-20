@@ -71,6 +71,12 @@ export interface ChatSessionOptions {
   // Executes a compiled brief. Wired to runner.run() in production; tests
   // can swap in a stub that emits trace events synchronously.
   executeRun: (brief: Brief) => Promise<ExecuteOutcome>;
+  // v0.12.0: PermissionBridge surface. The cli layer maintains a Session
+  // reference for the live run and exposes the active grant ledger via
+  // these callbacks. Both are optional so tests / library consumers that
+  // don't expose grants still typecheck.
+  getActiveGrants?: () => readonly import("../types.js").Grant[];
+  revokeGrant?: (grant_id: string) => boolean;
 }
 
 export interface ExecuteOutcome {
@@ -224,6 +230,35 @@ export class ChatSession {
       case "/resume":
         this.opts.io.write(`Re-run with: openwar chat --resume ${args[0] ?? "<chat_id>"}\n`);
         return "continue";
+      case "/grants": {
+        // v0.12.0: list active permission grants from the live run, if any.
+        const grants = this.opts.getActiveGrants?.() ?? [];
+        if (grants.length === 0) {
+          this.opts.io.write("no active permission grants in this session.\n");
+          return "continue";
+        }
+        for (const g of grants) {
+          const consumed = g.consumed ? " (consumed)" : "";
+          const cat = g.category ?? "(no category)";
+          this.opts.io.write(
+            `  ${g.grant_id}  scope=${g.scope}  cat=${cat}${consumed}\n` +
+              `    action: ${g.action}\n` +
+              `    reason: ${g.reasoning}\n` +
+              `    at:     ${g.granted_at}\n`,
+          );
+        }
+        return "continue";
+      }
+      case "/revoke": {
+        const id = args[0];
+        if (!id) {
+          this.opts.io.write("usage: /revoke <grant_id>\n");
+          return "continue";
+        }
+        const ok = this.opts.revokeGrant?.(id) ?? false;
+        this.opts.io.write(ok ? `revoked grant ${id}.\n` : `no active grant with id ${id}.\n`);
+        return "continue";
+      }
       default:
         this.opts.io.write(HELP_TEXT + "\n");
         return "continue";

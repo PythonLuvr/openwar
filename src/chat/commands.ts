@@ -12,6 +12,9 @@ export const COMMAND_NAMES = [
   "/resume",
   "/abort",
   "/quit",
+  // v0.12.0: PermissionBridge surface
+  "/grants",
+  "/revoke",
 ] as const;
 
 export type CommandName = (typeof COMMAND_NAMES)[number];
@@ -69,6 +72,8 @@ export const HELP_TEXT = `Commands:
   /history            print the conversation so far
   /resume <chat_id>   switch to a different saved chat session (also: openwar chat --resume <id>)
   /abort              cancel any in-progress execution (polite; ends at the next phase boundary)
+  /grants             list active permission grants from the current run (v0.12)
+  /revoke <id>        revoke a permission grant by id; the agent will get re-prompted next time (v0.12)
   /quit               exit the session (chat log is saved automatically)
 
 You don't need any of these. Just describe what you want and I'll handle the rest.`;
