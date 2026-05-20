@@ -85,6 +85,8 @@ class MyAdapter implements AgentAdapter {
 }
 ```
 
+The full `StreamEvent` union also includes `tool_call_arg_delta` / `tool_call_complete` (for adapters that surface streaming tool-call arguments) and `error` (for terminal errors). As of v0.12.1, the cli-bridge adapter additionally yields four `bridged_*` variants (`bridged_tool_call`, `bridged_tool_result`, `bridged_thinking_delta`, `bridged_usage`) that capture structured events from inside a bridged CLI's own run via Squire's vendor-aware adapters; see [`docs/adapters.md`](./adapters.md) for the full surface. Custom adapters do not normally need to emit `bridged_*` events; they are specific to the cli-bridge integration.
+
 Then use it the same way as the built-ins:
 
 ```ts

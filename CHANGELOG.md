@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.12.1
+
+Squire structured-event adoption. v0.11.2 added no-op case arms so the build stayed compile-safe against Squire 1.1.0's four new event variants; v0.12.1 wires them up. The runtime now sees what a bridged CLI sees: every tool the bridged Claude Code or Gemini CLI invokes, every result, every thinking-mode token, and every usage report. The trace, the cost ledger, and `openwar inspect --tools` all surface the new data.
+
+This release does not change what OpenWar does. It changes what OpenWar sees. v0.12.0 (PermissionBridge) sharpened enforcement; v0.12.1 sharpens visibility.
+
+### Added
+
+- **Four new `StreamEvent` variants** for cli-bridge translation of Squire's vendor-aware adapter output: `bridged_tool_call`, `bridged_tool_result`, `bridged_thinking_delta`, `bridged_usage`. The `bridged_` prefix is load-bearing: it disambiguates events captured from inside a bridged CLI's run from OpenWar's own native-tool dispatch (the un-prefixed `tool_call_complete` etc.). All variants carry a `binary` field naming the bridged CLI.
+- **Four new trace event variants** mirroring the StreamEvent surface: `bridged_tool_call`, `bridged_tool_result`, `bridged_thinking_delta`, `bridged_usage`. The `bridged_usage` event is emitted to the trace in addition to feeding the cost ledger when one exists; single-agent cli-bridge runs (no coordinator) still get usage observability via the trace.
+- **`TRACE_SCHEMA_VERSION` bumped to 4.** Additive. Old readers ignore unknown event types.
+- **`CostUsage` extended** with four optional bridged-token fields: `bridged_tokens_input`, `bridged_tokens_output`, `bridged_tokens_cache_read`, `bridged_tokens_cache_write`. Older serialized sessions deserialize cleanly (all fields optional).
+- **`addBridgedUsage(usage, u)` helper** in `src/coordinator/cost-tracker.ts`. Input + output tokens flow into `tokens_used` (budget-relevant). Cache reads / writes are recorded on the new dedicated counters but excluded from `tokens_used`: cache reads bill at a fraction of normal input rates (Anthropic roughly 10%) and including them in the running budget would trip `--max-tokens` gates prematurely. Re-exported from `src/coordinator/index.ts` alongside the existing `addTokens`.
+- **Translation layer in `src/adapters/cli-bridge.ts`.** The four `return null` case arms from v0.11.2 are replaced with real translations. Field naming converts Squire camelCase (`id`, `name`, `input`, `inputTokens`, ...) to OpenWar snake_case (`call_id`, `tool_name`, `arguments`, `input_tokens`, ...) at the cli-bridge boundary so downstream consumers see consistent OpenWar shapes. The exhaustive `never` check at the bottom of the switch is preserved so future additive Squire variants surface as compile-time errors.
+- **Shared `handleBridgedStreamEvent` helper** at `src/runtime/bridged-events.ts`. Single convergence point for routing `bridged_*` events from the StreamEvent stream to the tracer (always) and the cost ledger (when wired). Used by both `src/phases/execute.ts` (single-agent dispatch) and `src/coordinator/driver.ts` (multi-agent executor / planner / reviewer turns). Single-agent runs typically pass no usage sink; the trace still captures `bridged_usage` for `openwar inspect` to surface.
+- **`openwar inspect --tools` groups bridged vs native.** Two sections in the output: "Native tool calls (OpenWar runtime)" with the existing columns (`at`, `tool`, `auth`, `result`, `duration`, `bytes`), and "Bridged CLI tool calls (from inside the bridged CLI's run)" with `at`, `binary`, `tool`, `result`. Native section appears first when both are present. New formatter `formatPermissions` from v0.12.0 stays unchanged; the new bridged grouping is additive within `formatTools`.
+- **Snapshot fixtures from real Squire vendor-adapter output.** Copied from `@pythonluvr/squire@1.1.0`'s source repo into `tests/fixtures/squire-snapshot/{claude-code,gemini-cli}/list-files.jsonl` with a `README.md` documenting the snapshot version. Tests drive Squire's published `claudeCodeAdapter` / `geminiCliAdapter` against the fixtures to produce real `SquireEvent` streams, then feed each event through OpenWar's `translateEvent` and assert the `StreamEvent` shape. Pattern catches drift on either side: if Squire changes shape the snapshot either still parses (giving us a new event distribution to assert against) or fails to parse (signaling drift).
+- **30 new tests** across `tests/adapters/cli-bridge-structured-events.test.ts` (Squire fixture → translateEvent end-to-end, plus stdout/stderr/message_start passthroughs), `tests/state/bridged-trace-events.test.ts` (schema bump + round-trip for all four event types including cache-field separation), `tests/coordinator/cost-tracker-bridged-tokens.test.ts` (addBridgedUsage accumulation, cache-token exclusion from budget, no regression on addTokens), and `tests/cli/inspect-tools-bridged.test.ts` (formatter grouping, pending result rendering, no regression on the native section). Total 819 to 849 (30 new; brief estimated 20).
+
+### Changed
+
+- **`docs/observability.md`** documents the four new trace events and the schema bump; `--tools` grouping behavior noted.
+- **`docs/adapters.md`** gains a "Structured event capture (v0.12.1+)" subsection mapping Squire variants to OpenWar variants and explaining the cache-token budget treatment.
+- **`docs/library.md`** notes the four new `bridged_*` StreamEvent variants and points custom-adapter authors at `docs/adapters.md`.
+- **`RunCoordinatorOptions` gains optional `tracer?: Tracer`** so the multi-agent path can route bridged events into the global trace. Existing coordinator callers see no behavior change; tests / smoke runs that omit the field skip bridged-event capture inside the coordinator.
+
+### Design notes (Phase 0 rulings)
+
+- **`bridged_thinking_delta` ships as a distinct StreamEvent variant**, NOT folded into `text_delta`. Thinking content is semantically different from assistant-visible text; consumers (renderers, dashboards, filters) need to route or hide it independently. Existing `text_delta` shape stays clean.
+- **`bridged_usage` emits to the trace AND feeds the cost ledger.** The brief originally specified cost-ledger only; Phase 0 caught that the cost ledger only exists for multi-agent runs, which would have dropped single-agent cli-bridge usage data. Emitting to the trace always (with the cost ledger feed as an additional path when wired) keeps observability honest across both run modes. This is the source of the fourth new trace event variant; the brief had three.
+- **Cache tokens recorded for visibility but excluded from `tokens_used` budget arithmetic.** Cache reads bill at a fraction of normal input rates; including them would trip `--max-tokens` gates on the wrong cadence. Operators reading the trace see the cache breakdown via the dedicated `bridged_tokens_cache_*` counters; the running budget total stays accurate.
+- **Snapshot fixtures from Squire's source repo, version-tagged.** Squire's npm package ships only `dist/`, not `tests/fixtures/`, so the import path is the sibling source repo, snapshotted with a `README.md` naming the Squire version. Future Squire minor / major bumps trigger a manual re-sync.
+- **Test paths follow workspace convention** (`tests/adapters/`, `tests/coordinator/`, `tests/state/`, `tests/cli/`).
+
+### Constraints honored
+
+- Zero new runtime dependencies. Squire stays at `^1.1.0`; no other deps added.
+- TypeScript strict mode green.
+- Em-dash gate green. Sanity-regex gate green.
+- Backwards compatible. New `StreamEvent` variants are additive; existing consumers ignore unknown types. New `CostUsage` fields are optional; older sessions deserialize cleanly. New `RunCoordinatorOptions.tracer` is optional; coordinator behavior unchanged when omitted. Translation of `text_delta` / `message_stop` / `error` / `stdout` / `stderr` / `message_start` is unchanged from v0.11.2.
+- No public-surface regression. Trace event union grew by four additive variants; old readers ignore unknown types. Existing `openwar inspect` flags unchanged. The `--tools` formatter's native section preserves its column shape; the bridged section is a new additional block.
+
 ## 0.12.0
 
 PermissionBridge: the destructive-action gate gets articulate. Bridged CLIs (and any tool-calling agent) can now ask for permission BEFORE acting with a structured payload (action, scope, reasoning, fallback). The operator answers at one of three scopes. The discipline layer does not relax; the conversation gets better. Phase 3 still fires whenever no grant matches.

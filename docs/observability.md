@@ -43,11 +43,15 @@ Event types in v0.8.0:
 | `permission_denied` | v0.12.0+. Operator denied, or no operator available (headless non-TTY). Carries `grant_id`, `operator_note`. |
 | `permission_grant_consumed` | v0.12.0+. Phase 3 found a matching grant for an unauthorized tool call. Carries `grant_id`, `consuming_tool_call_id`. The dispatcher proceeds without the operator prompt. |
 | `permission_revoked` | v0.12.0+. Operator revoked a grant via `/revoke` or `Session.revokeGrant()`. Carries `grant_id`, `revoked_at`. Persistent grants get the revoke row appended to disk. |
+| `bridged_tool_call` | v0.12.1+. A tool was invoked INSIDE a bridged CLI's own run (Claude Code, Gemini CLI, etc. via Squire's vendor-aware adapters). Carries `call_id`, `tool_name`, `arguments`, `binary` (which CLI emitted it), `at`. Distinct from the existing native `tool_call` (which captures OpenWar's runtime dispatching its own tools). |
+| `bridged_tool_result` | v0.12.1+. Matching result for a prior `bridged_tool_call`. Carries `call_id`, `result`, `is_error`, `binary`, `at`. |
+| `bridged_thinking_delta` | v0.12.1+. Reasoning / thinking tokens emitted by the bridged CLI (e.g. Claude Code thinking blocks). Carries `delta`, `binary`, `at`. Separate from `text_delta` so consumers can filter or hide thinking independently from assistant-visible text. |
+| `bridged_usage` | v0.12.1+. Token-usage summary reported by the bridged CLI. Carries optional `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, plus `binary` and `at`. Also feeds the cost ledger when a multi-agent coordinator is running; emitted to the trace always so single-agent cli-bridge runs do not lose usage observability. **Budget arithmetic uses input + output only**; cache reads / writes are recorded for visibility but excluded from `tokens_used` to avoid tripping `--max-tokens` gates prematurely (cache reads bill at a fraction of normal input rates). |
 | `error` | Catchall for runtime exceptions surfaced at known seams. |
 
-The schema is versioned. v0.8.0 shipped `version: 1`. v0.11.1 bumped to `version: 2` for the additive `tool_cancelled` event. v0.12.0 bumped to `version: 3` for the five additive `permission_*` events. Each bump is forward-compatible; consumers should treat unknown event types as informational and ignore unknown optional fields.
+The schema is versioned. v0.8.0 shipped `version: 1`. v0.11.1 bumped to `version: 2` for the additive `tool_cancelled` event. v0.12.0 bumped to `version: 3` for the five additive `permission_*` events. v0.12.1 bumped to `version: 4` for the four additive `bridged_*` events. Each bump is forward-compatible; consumers should treat unknown event types as informational and ignore unknown optional fields.
 
-`openwar inspect <brief_id> --permissions` renders a per-grant audit row across the permission events: grant id, status (requested / granted / denied / consumed / revoked), scope, category, action, and timestamp. See [`docs/permissions.md`](./permissions.md) for the full PermissionBridge surface.
+`openwar inspect <brief_id> --permissions` renders a per-grant audit row across the permission events. `openwar inspect <brief_id> --tools` groups output into a "Native tool calls" section (OpenWar's runtime) and a "Bridged CLI tool calls" section (events from inside a bridged CLI's own run, with the `binary` name). See [`docs/permissions.md`](./permissions.md) for the PermissionBridge surface and [`docs/adapters.md`](./adapters.md) for the cli-bridge surface.
 
 ---
 

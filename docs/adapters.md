@@ -121,6 +121,23 @@ If the existing settings file is malformed JSON, the runner halts cleanly into P
 
 Operators who manage their Claude Code settings via dotfiles, Ansible, or company policy can opt out with `cli.skip_permission_setup: true` in the brief frontmatter; the merge is skipped and the operator manages permissions themselves. Gemini CLI and Codex CLI permission auto-setup are not in v0.7.2; if real testing surfaces the same friction with those CLIs, handling lands in v0.7.3+.
 
+### Structured event capture (v0.12.1+)
+
+Squire's vendor-aware adapters (`claude-code`, `gemini-cli`) parse the bridged CLI's stream-json output and emit four structured event variants beyond plain text: `tool_call`, `tool_result`, `thinking_delta`, and `usage`. As of v0.12.1, OpenWar's cli-bridge translates these into corresponding `bridged_*` `StreamEvent` variants and routes them into the trace and (when a multi-agent coordinator is running) the cost ledger:
+
+| Squire event | OpenWar `StreamEvent` | OpenWar trace event | Notes |
+|---|---|---|---|
+| `tool_call` | `bridged_tool_call` | `bridged_tool_call` | Field rename: Squire `id`/`name`/`input` to OpenWar `call_id`/`tool_name`/`arguments`. The `binary` field names the bridged CLI. |
+| `tool_result` | `bridged_tool_result` | `bridged_tool_result` | Carries the matching `call_id` plus the vendor's `output` and `is_error`. |
+| `thinking_delta` | `bridged_thinking_delta` | `bridged_thinking_delta` | Kept distinct from `text_delta` so observers can filter or hide thinking content. |
+| `usage` | `bridged_usage` | `bridged_usage` | Reports `input_tokens` / `output_tokens` / `cache_read_tokens` / `cache_write_tokens` (all optional; vendors report what they have). Input + output flow into the cost ledger's `tokens_used`; cache reads / writes are recorded separately for visibility and excluded from the running budget total. |
+
+The `bridged_` prefix is load-bearing: it distinguishes events captured from inside a bridged CLI's run from OpenWar's own native-tool dispatch (which uses the un-prefixed `tool_call` / `tool_result` trace events). Observers, dashboards, and `openwar inspect --tools` use the prefix to group the two streams.
+
+If your cli-bridge run targets a CLI that Squire does not have a vendor-aware adapter for (the default text-stream path), no structured events are emitted; OpenWar sees only `text_delta` and `message_stop` and the trace captures the existing text-only shape.
+
+When Squire ships additional vendor-aware adapters (e.g. Codex CLI in a future Squire release), OpenWar's translation code already handles the same four variants automatically. No OpenWar code change is required to adopt them; bumping the Squire dep range is enough.
+
 ### When to use cli-bridge vs an API adapter
 
 Use `cli-bridge` when:
