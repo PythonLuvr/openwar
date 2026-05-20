@@ -17,6 +17,7 @@ import * as inspect from "./cli/inspect.js";
 import { runReplay } from "./cli/replay.js";
 import { runHistory, formatHistoryReport } from "./cli/history.js";
 import { runChatCommand, ChatStartupError } from "./cli/chat.js";
+import { runServeCommand } from "./cli/serve.js";
 import { buildHistoryReport } from "./state/history-report.js";
 import { runLearn } from "./cli/learn.js";
 import { formatLearnedView } from "./cli/inspect-learned.js";
@@ -966,6 +967,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return commandLearn(parsed);
     case "chat":
       return await commandChat(parsed);
+    case "serve":
+      return await runServeCommand(parsed);
     default:
       process.stderr.write(`openwar: unknown command "${cmd}". See 'openwar --help'.\n`);
       return 2;
