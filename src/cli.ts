@@ -101,6 +101,7 @@ Usage:
   openwar inspect <brief_id> --detectors
   openwar inspect <brief_id> --tools
   openwar inspect <brief_id> --mcp
+  openwar inspect <brief_id> --permissions
   openwar inspect <brief_id> --history                   # project history for this brief's slug
   openwar replay <brief_id>
   openwar dashboard [--port <n>]
@@ -354,12 +355,12 @@ function commandInspect(parsed: ParsedFlags): number {
       w(e.message.content.trim() + "\n");
     }
   } else {
-    w(`\nMessages: ${session.messages.length} (use --transcript to print full transcript, or --trace/--timing/--cost/--detectors/--tools/--mcp for v0.8 focused views)\n`);
+    w(`\nMessages: ${session.messages.length} (use --transcript to print full transcript, or --trace/--timing/--cost/--detectors/--tools/--mcp/--permissions for focused views)\n`);
   }
   return 0;
 }
 
-type InspectMode = "trace" | "timing" | "cost" | "detectors" | "tools" | "mcp" | "history" | "learned";
+type InspectMode = "trace" | "timing" | "cost" | "detectors" | "tools" | "mcp" | "history" | "learned" | "permissions";
 
 function resolveInspectMode(flags: Record<string, string | boolean>): InspectMode | null {
   if (flags["trace"] === true) return "trace";
@@ -370,6 +371,7 @@ function resolveInspectMode(flags: Record<string, string | boolean>): InspectMod
   if (flags["mcp"] === true) return "mcp";
   if (flags["history"] === true) return "history";
   if (flags["learned"] === true) return "learned";
+  if (flags["permissions"] === true) return "permissions";
   return null;
 }
 
@@ -451,6 +453,9 @@ function commandInspectMode(briefId: string, mode: InspectMode, flags: Record<st
       return 0;
     case "mcp":
       w(inspect.formatMcp(events) + "\n");
+      return 0;
+    case "permissions":
+      w(inspect.formatPermissions(events) + "\n");
       return 0;
   }
 }

@@ -12,6 +12,13 @@ import {
   aggregateDetectorCounts,
 } from "../state/trace.js";
 
+// Truncate to N chars with an ellipsis if longer. Used by permission-event
+// formatters to keep action text from blowing the column shape.
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, Math.max(0, max - 1)) + "…";
+}
+
 // Stable column-width table builder used by all the focused modes. Centralized
 // so the docs section "Inspect output column shape" has a single anchor.
 export function table(headers: readonly string[], rows: readonly string[][]): string {
@@ -115,6 +122,16 @@ function formatEventLine(ev: TraceEvent): string {
       return `${at}  chat_saved   chat=${ev.chat_id}  path=${ev.path}`;
     case "tool_cancelled":
       return `${at}  tool_cancel  ${ev.tool_name}  call=${ev.call_id}  source=${ev.cancellation_source}  partial_bytes=${ev.partial_output.length}`;
+    case "permission_requested":
+      return `${at}  perm_req     grant=${ev.grant_id}  scope=${ev.scope_requested}  cat=${ev.category ?? "-"}  action=${truncate(ev.action, 60)}`;
+    case "permission_granted":
+      return `${at}  perm_grant   grant=${ev.grant_id}  scope=${ev.scope_granted}${ev.operator_note ? `  note="${truncate(ev.operator_note, 40)}"` : ""}`;
+    case "permission_denied":
+      return `${at}  perm_deny    grant=${ev.grant_id}${ev.operator_note ? `  note="${truncate(ev.operator_note, 40)}"` : ""}`;
+    case "permission_grant_consumed":
+      return `${at}  perm_use     grant=${ev.grant_id}  by_call=${ev.consuming_tool_call_id}`;
+    case "permission_revoked":
+      return `${at}  perm_revoke  grant=${ev.grant_id}`;
     case "error":
       return `${at}  ERROR        phase=${ev.phase}  ${ev.error}`;
     default: {
@@ -221,4 +238,90 @@ export function formatMcp(events: readonly TraceEvent[]): string {
   );
   if (relevant.length === 0) return "(no MCP / settings events in this trace; no cli-bridge MCP forwarding ran)";
   return relevant.map(formatEventLine).join("\n");
+}
+
+// --- Permissions mode: PermissionBridge grant ledger over the trace. ---
+//
+// Builds a per-grant audit row by walking permission_* events. Shows the
+// final status of each grant (granted, denied, consumed, revoked) plus
+// the action / scope / category that motivated it. The trace is the
+// canonical source of truth for grants; the in-memory ledger only lives
+// for the duration of an active session.
+
+export function formatPermissions(events: readonly TraceEvent[]): string {
+  interface Row {
+    grant_id: string;
+    status: "granted" | "denied" | "consumed" | "revoked" | "requested";
+    scope: string;
+    category: string;
+    action: string;
+    at: string;
+  }
+  const rows = new Map<string, Row>();
+  for (const ev of events) {
+    if (ev.type === "permission_requested") {
+      rows.set(ev.grant_id, {
+        grant_id: ev.grant_id,
+        status: "requested",
+        scope: ev.scope_requested,
+        category: ev.category ?? "-",
+        action: ev.action,
+        at: ev.at,
+      });
+    } else if (ev.type === "permission_granted") {
+      const r = rows.get(ev.grant_id);
+      if (r) {
+        r.status = "granted";
+        r.scope = ev.scope_granted;
+        r.at = ev.at;
+      } else {
+        rows.set(ev.grant_id, {
+          grant_id: ev.grant_id,
+          status: "granted",
+          scope: ev.scope_granted,
+          category: "-",
+          action: "(no preceding request event)",
+          at: ev.at,
+        });
+      }
+    } else if (ev.type === "permission_denied") {
+      const r = rows.get(ev.grant_id);
+      if (r) {
+        r.status = "denied";
+        r.at = ev.at;
+      } else {
+        rows.set(ev.grant_id, {
+          grant_id: ev.grant_id,
+          status: "denied",
+          scope: "-",
+          category: "-",
+          action: "(no preceding request event)",
+          at: ev.at,
+        });
+      }
+    } else if (ev.type === "permission_grant_consumed") {
+      const r = rows.get(ev.grant_id);
+      if (r) {
+        r.status = "consumed";
+        r.at = ev.at;
+      }
+    } else if (ev.type === "permission_revoked") {
+      const r = rows.get(ev.grant_id);
+      if (r) {
+        r.status = "revoked";
+        r.at = ev.revoked_at;
+      }
+    }
+  }
+  const out = [...rows.values()];
+  if (out.length === 0) return "(no permission events in this trace; the agent did not call request_permission)";
+  const data = out.map((r) => [
+    r.grant_id.slice(0, 8),
+    r.status,
+    r.scope,
+    r.category,
+    truncate(r.action, 50),
+    r.at,
+  ]);
+  return table(["grant_id", "status", "scope", "category", "action", "at"], data);
 }
